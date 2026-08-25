@@ -1,0 +1,6 @@
+.server.pid
+server.log
+node_modules
+prices.json
+.DS_Store
+*.log

@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>pi token 消耗看板</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --border: #e3e6ea;
+    --text: #1f2329;
+    --muted: #8a9099;
+    --accent: #2f6bff;
+    --accent-soft: #e8f0ff;
+    --bar: #2f6bff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 16px 24px; background: var(--card); border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  button, select, input[type=text], input[type=number] {
+    font: inherit; padding: 6px 12px; border: 1px solid var(--border);
+    border-radius: 8px; background: #fff; color: var(--text);
+  }
+  input[type=number] { width: 92px; padding: 4px 8px; }
+  #search { width: 280px; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:hover { filter: brightness(0.97); }
+  .auto { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; cursor: pointer; }
+  main { padding: 20px 24px 60px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card .k { color: var(--muted); font-size: 12px; }
+  .card .v { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .card .v small { font-size: 12px; color: var(--muted); font-weight: 400; }
+  .card.cost .v { color: #e0432b; }
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 20px; }
+  section h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  section h2 .tag { font-size: 11px; color: var(--muted); font-weight: 400; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; cursor: pointer; user-select: none; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.path { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  .table-scroll { max-height: 60vh; overflow: auto; }
+  .table-scroll thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
+  #wsTable, #sessTable { table-layout: fixed; }
+  #sessTable th:nth-child(1), #sessTable td:nth-child(1),
+  #sessTable th:nth-child(2), #sessTable td:nth-child(2),
+  #wsTable th:nth-child(1), #wsTable td:nth-child(1) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #sessTable th:nth-child(1) { width: 18%; }
+  #sessTable th:nth-child(2) { width: 14%; }
+  #sessTable th:nth-child(3) { width: 9%; }
+  #sessTable th:nth-child(4) { width: 9%; }
+  #sessTable th:nth-child(5) { width: 8%; }
+  #sessTable th:nth-child(6) { width: 9%; }
+  #sessTable th:nth-child(7) { width: 8%; }
+  #sessTable th:nth-child(8) { width: 7%; }
+  #sessTable th:nth-child(9) { width: 8%; }
+  #sessTable th:nth-child(10) { width: 10%; }
+  #wsTable th:nth-child(1) { width: 40%; }
+  #wsTable th:nth-child(2) { width: 9%; }
+  #wsTable th:nth-child(3) { width: 12%; }
+  #wsTable th:nth-child(4) { width: 11%; }
+  #wsTable th:nth-child(5) { width: 8%; }
+  #wsTable th:nth-child(6) { width: 11%; }
+  #wsTable th:nth-child(7) { width: 9%; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: var(--accent-soft); }
+  tr.active { background: var(--accent-soft); }
+  .bar-row { display: grid; grid-template-columns: 200px 1fr 200px; align-items: center; gap: 10px; padding: 4px 0; }
+  .bar-label { overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+  .bar-track { background: #eef0f3; border-radius: 6px; height: 18px; overflow: hidden; }
+  .bar-fill { background: var(--bar); height: 100%; border-radius: 6px; }
+  .bar-val { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar-sub { display: block; color: var(--muted); font-size: 11px; }
+  .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .range { position: relative; display: inline-block; }
+  .range-trigger {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 12px; background: #fff; color: var(--text);
+    font: inherit; cursor: pointer;
+  }
+  .range-trigger:hover { border-color: var(--accent); }
+  .range-trigger svg { width: 15px; height: 15px; color: var(--muted); }
+  .range-text { color: var(--text); white-space: nowrap; }
+  .range-clear { color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
+  .range-clear:hover { color: var(--accent); }
+  .range-pop {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 50;
+    background: #fff; border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.12); padding: 14px; width: 300px;
+  }
+  .range-presets { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .range-presets button {
+    font: inherit; font-size: 13px; padding: 5px 12px;
+    border: 1px solid var(--border); border-radius: 999px; background: #fff;
+    cursor: pointer; color: var(--muted);
+  }
+  .range-presets button:hover { border-color: var(--accent); color: var(--accent); }
+  .range-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .range-cal-title { font-weight: 600; font-size: 16px; }
+  .range-nav { font: inherit; border: none; background: transparent; cursor: pointer; font-size: 22px; color: var(--muted); padding: 0 8px; line-height: 1; }
+  .range-nav:hover { color: var(--accent); }
+  .range-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .range-wd { color: var(--muted); font-size: 13px; text-align: center; padding: 4px 0; }
+  .range-day { text-align: center; padding: 9px 0; border-radius: 8px; cursor: pointer; font-size: 16px; }
+  .range-day.empty { cursor: default; }
+  .range-day:hover:not(.empty) { background: var(--accent-soft); }
+  .range-day.today { font-weight: 700; outline: 1px solid var(--border); }
+  .range-day.in { background: var(--accent-soft); }
+  .range-day.start, .range-day.end { background: var(--accent); color: #fff; }
+  .range-foot { display: flex; justify-content: flex-end; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .range-apply { font: inherit; padding: 6px 18px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font-size: 14px; }
+  .range-apply:hover { filter: brightness(0.97); }
+  .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .empty { color: var(--muted); padding: 12px 0; }
+  .price-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .price-table-wrap { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+  .price-table-wrap input { width: 100%; border: none; border-radius: 0; background: transparent; }
+  .price-table-wrap td { padding: 2px 6px; }
+  .price-table-wrap th { position: sticky; top: 0; background: var(--card); }
+  button.del { padding: 2px 8px; color: var(--muted); border-color: var(--border); }
+  .money { color: #e0432b; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <h1>pi token 消耗看板</h1>
+  <span class="meta" id="meta">加载中…</span>
+  <div class="spacer"></div>
+  <label class="auto"><input type="checkbox" id="auto" /> 自动刷新(30s)</label>
+  <button class="primary" id="refresh">刷新</button>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+
+  <div class="controls">
+    <label>工作区：
+      <select id="ws"></select>
+    </label>
+    <div class="range" id="range">
+      <button type="button" class="range-trigger" id="rangeTrigger">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <span class="range-text" id="rangeText">时间范围</span>
+        <span class="range-clear" id="rangeClear" title="清除" hidden>×</span>
+      </button>
+      <div class="range-pop" id="rangePop" hidden>
+        <div class="range-presets" id="rangePresets">
+          <button type="button" data-p="7">近7天</button>
+          <button type="button" data-p="30">近30天</button>
+          <button type="button" data-p="90">近90天</button>
+          <button type="button" data-p="all">全部</button>
+        </div>
+        <div class="range-cal-head">
+          <button type="button" class="range-nav" id="calPrev">‹</button>
+          <span class="range-cal-title" id="calTitle"></span>
+          <button type="button" class="range-nav" id="calNext">›</button>
+        </div>
+        <div class="range-grid" id="calGrid"></div>
+        <div class="range-foot">
+          <button type="button" class="range-apply" id="rangeApply">确定</button>
+        </div>
+      </div>
+    </div>
+    <label>搜索会话：<input type="text" id="search" placeholder="按会话ID / 名称 / 路径过滤" /></label>
+  </div>
+
+  <section>
+    <h2>价格配置 <span class="tag">每百万 token 单价 · 自动从数据抓取模型，已知模型已预置官价，可直接改</span></h2>
+    <div class="price-tools">
+      <label>货币：<select id="cur">
+        <option value="¥">¥ (CNY)</option>
+        <option value="$">$ (USD)</option>
+        <option value="€">€ (EUR)</option>
+        <option value="£">£ (GBP)</option>
+        <option value="₩">₩ (KRW)</option>
+      </select></label>
+      <button id="fillDefaults">填入官方默认价</button>
+      <button id="clearPrices">清空</button>
+      <label>添加模型：<input type="text" id="addModel" placeholder="模型名" /></label>
+      <button id="addBtn">添加</button>
+    </div>
+    <div class="price-table-wrap">
+      <table id="priceTable">
+        <thead><tr>
+          <th>模型</th>
+          <th class="num">输入单价</th>
+          <th class="num">输出单价</th>
+          <th class="num">缓存命中</th>
+          <th class="num">缓存创建</th>
+          <th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="note">默认价口径：GPT-5.6 三档按 2026-07-30 降价后官价折算（1 USD≈¥7.2）；DeepSeek-V4-Flash 按官方 ¥1/¥2/¥0.02（每百万）。其它模型默认 0，填上即可。花费 = (输入×输入价 + 输出×输出价 + 缓存命中×命中价 + 缓存创建×创建价) / 1e6。</p>
+  </section>
+
+  <section>
+    <h2>工作区总消耗 <span class="tag">点击某行可筛选下方会话</span></h2>
+    <table id="wsTable">
+      <thead><tr>
+        <th data-k="cwd">工作区</th>
+        <th class="num" data-k="sessions">会话</th>
+        <th class="num" data-k="totalTokens">总 token</th>
+        <th class="num" data-k="input">输入</th>
+        <th class="num" data-k="output">输出</th>
+        <th class="num" data-k="cacheRead">缓存命中</th>
+        <th class="num" data-k="cost">花费</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>会话明细 <span class="tag" id="sessTag"></span></h2>
+    <div class="table-scroll">
+    <table id="sessTable">
+      <thead><tr>
+        <th data-k="name">会话名</th>
+        <th data-k="cwd">工作区</th>
+        <th class="num" data-k="totalTokens">总 token</th>
+        <th class="num" data-k="input">输入</th>
+        <th class="num" data-k="output">输出</th>
+        <th class="num" data-k="cacheRead">缓存命中</th>
+        <th class="num" data-k="hitRate">命中率</th>
+        <th class="num" data-k="messages">消息</th>
+        <th class="num" data-k="cost">花费</th>
+        <th data-k="topModel">主力模型</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>按天 <span class="tag" id="dayTag">全部工作区 · Asia/Shanghai · 按天花费为估算</span></h2>
+    <div id="days"></div>
+  </section>
+
+  <section>
+    <h2>按模型</h2>
+    <div id="models"></div>
+  </section>
+
+  <section>
+    <h2>按提供商</h2>
+    <div id="providers"></div>
+    <p class="note">说明：本地数据里 cost 字段恒为 0（pi 不记费用），这里的总花费是按你配置的单价的估算值。huoshan-*-plan 是套餐额度、不按量计，其花费按量估算仅供参照。</p>
+  </section>
+</main>
+
+<script>
+// ---------- 默认单价（每百万 token，货币见 DEFAULT_CCY）----------
+const DEFAULT_CCY = '¥';
+const USD2CNY = 7.2;
+function usd(n){ return n * USD2CNY; } // 把官方美元价折算成人民币默认价
+const DEFAULTS = {
+  'gpt-5.6-terra': { input: usd(2.00), output: usd(12.00), cacheRead: usd(0.20), cacheWrite: usd(2.50) },
+  'gpt-5.6-sol':   { input: usd(5.00), output: usd(30.00), cacheRead: usd(0.50), cacheWrite: usd(6.25) },
+  'gpt-5.6-luna':  { input: usd(0.20), output: usd(1.20),  cacheRead: usd(0.02), cacheWrite: usd(0.25) },
+  'deepseek-v4-flash': { input: 1, output: 2, cacheRead: 0.02, cacheWrite: 0 },
+  'deepseek-v4-pro':   { input: 2, output: 4, cacheRead: 0.04, cacheWrite: 0 },
+  'glm-5.2':   { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  'grok-4.5':  { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  'ark-code-latest': { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+};
+
+// ---------- 工具 ----------
+function fmt(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+function fmtFull(n) { return n.toLocaleString('en-US'); }
+function fmtMoney(n) {
+  const s = state.currency || '¥';
+  if (Math.abs(n) < 1000) return s + n.toFixed(2);
+  return s + Math.round(n).toLocaleString('en-US');
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+function datePart(iso) { return iso ? iso.slice(0, 10) : '-'; }
+
+// ---------- 持久化（localStorage）----------
+function loadPrices() { try { return JSON.parse(localStorage.getItem('pi-prices') || '{}'); } catch { return {}; } }
+function savePrices() {
+  try { localStorage.setItem('pi-prices', JSON.stringify(state.prices)); } catch {}
+  try {
+    fetch('/api/prices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prices: state.prices, currency: state.currency }) });
+  } catch {}
+}
+function loadCur() { return localStorage.getItem('pi-currency') || DEFAULT_CCY; }
+function saveCur(c) { localStorage.setItem('pi-currency', c); }
+
+// ---------- 状态 ----------
+const state = {
+  data: null, workspace: 'ALL', search: '', from: '', to: '', sortKey: 'totalTokens', sortDir: -1, auto: false,
+  prices: loadPrices(), currency: loadCur(), _priceBuilt: false,
+};
+
+// ---------- 聚合（前端按工作区筛选后实时重算，含花费）----------
+const ZERO_PRICE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+function zero() { return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: 0 }; }
+function addInto(a, u) {
+  a.input += u.input; a.output += u.output; a.cacheRead += u.cacheRead;
+  a.cacheWrite += u.cacheWrite; a.totalTokens += u.totalTokens;
+}
+function priceOf(prices, key) { return prices[key] || ZERO_PRICE; }
+function modelCost(u, p) {
+  return (u.input * p.input + u.output * p.output + u.cacheRead * p.cacheRead + u.cacheWrite * p.cacheWrite) / 1e6;
+}
+function sessionCost(s, prices) {
+  let c = 0;
+  for (const [m, u] of Object.entries(s.modelUsage)) c += modelCost(u, priceOf(prices, m));
+  return c;
+}
+// 时间窗口：dateStr（YYYY-MM-DD）是否落在 [from, to] 内（from/to 为空表示不限）
+function inDayWindow(dateStr, win) {
+  if (win.from && dateStr < win.from) return false;
+  if (win.to && dateStr > win.to) return false;
+  return true;
+}
+// 取会话在窗口内的逐日用量汇总（win 空则等于会话顶层 usage）
+function sessionWindowUsage(s, win) {
+  const u = zero();
+  for (const [d, x] of Object.entries(s.dayUsage)) if (inDayWindow(d, win)) addInto(u, x);
+  return u;
+}
+function aggregate(sessions, prices, win) {
+  win = win || { from: '', to: '' };
+  const totals = zero(); totals.messages = 0;
+  const wsMap = new Map(), dayMap = new Map(), modelMap = new Map(), provMap = new Map();
+  for (const s of sessions) {
+    // 该会话在窗口内的逐日用量；窗口外会话直接跳过（保证各维度一致）
+    const dayEntries = Object.entries(s.dayUsage).filter(([d]) => inDayWindow(d, win));
+    if ((win.from || win.to) && dayEntries.length === 0) continue;
+    const sc = sessionCost(s, prices); // 花费按会话完整量级估算（模型/提供商未拆到天）
+    totals.cost += sc;
+    for (const [, u] of dayEntries) addInto(totals, u); // token 类只累计窗口内天数
+    totals.messages += s.messages;
+    let w = wsMap.get(s.cwd); if (!w) { w = { cwd: s.cwd, sessions: 0, messages: 0, ...zero() }; wsMap.set(s.cwd, w); }
+    w.sessions++; w.messages += s.messages; w.cost += sc;
+    for (const [, u] of dayEntries) addInto(w, u);
+    for (const [d, u] of dayEntries) {
+      let x = dayMap.get(d); if (!x) { x = zero(); dayMap.set(d, x); }
+      addInto(x, u); x.cost += sc * (u.totalTokens / Math.max(1, s.totalTokens)); // 按天花费为估算
+    }
+    for (const [m, u] of Object.entries(s.modelUsage)) {
+      let x = modelMap.get(m); if (!x) { x = zero(); modelMap.set(m, x); }
+      addInto(x, u); x.cost += modelCost(u, priceOf(prices, m));
+    }
+    const pm = s.providerModelUsage || {};
+    for (const [p, modelMap] of Object.entries(pm)) {
+      let x = provMap.get(p); if (!x) { x = zero(); provMap.set(p, x); }
+      addInto(x, s.providerUsage[p] || zero()); // token 类用提供商顶层汇总
+      for (const [m, u] of Object.entries(modelMap)) {
+        x.cost += modelCost(u, priceOf(prices, m)); // 花费按各 model 真实单价算（修复之前恒为 0）
+      }
+    }
+    // 兜底：无 providerModelUsage 时维持旧行为（按 provider 名查价，通常为 0）
+    if (Object.keys(pm).length === 0) {
+      for (const [p, u] of Object.entries(s.providerUsage)) {
+        let x = provMap.get(p); if (!x) { x = zero(); provMap.set(p, x); }
+        addInto(x, u); x.cost += modelCost(u, priceOf(prices, p));
+      }
+    }
+  }
+  const toArr = (m) => [...m.entries()].map(([k, v]) => ({ key: k, ...v })).sort((a, b) => b.totalTokens - a.totalTokens);
+  return { totals, workspaces: toArr(wsMap), days: toArr(dayMap), models: toArr(modelMap), providers: toArr(provMap) };
+}
+
+// ---------- 数据加载 ----------
+async function load() {
+  const res = await fetch('/api/data');
+  state.data = await res.json();
+  if (state.data.prices && typeof state.data.prices === 'object') state.prices = state.data.prices;
+  if (state.data.currency) state.currency = state.data.currency;
+  state.data.sessions.forEach(s => {
+    const denom = (s.cacheRead || 0) + (s.input || 0);
+    s.hitRate = denom > 0 ? (s.cacheRead / denom) * 100 : 0;
+  });
+  if (!document.getElementById('ws').dataset.built) buildWsSelect();
+  if (!state._priceBuilt) { buildPriceTable(); state._priceBuilt = true; }
+  document.getElementById('cur').value = state.currency;
+  render();
+  document.getElementById('meta').textContent =
+    `最后更新 ${new Date(state.data.generatedAt).toLocaleString('zh-CN')} · 会话目录 ${state.data.sessionsDir} · 共 ${state.data.sessions.length} 个会话`;
+}
+
+function filteredSessions() {
+  let arr = state.data.sessions;
+  if (state.workspace !== 'ALL') arr = arr.filter(s => s.cwd === state.workspace);
+  const q = state.search ? state.search.toLowerCase() : '';
+  if (q) {
+    arr = arr.filter(s => s.name.toLowerCase().includes(q) || s.cwd.toLowerCase().includes(q) || s.id.toLowerCase().includes(q));
+  }
+  const k = state.sortKey, dir = state.sortDir;
+  arr = [...arr].sort((a, b) => {
+    // 搜索时，id 命中(按 ID 定位)优先排最前，避免被“名称里恰好提到该 ID”的其它会话挤下去
+    if (q) {
+      const ai = a.id.toLowerCase().includes(q) ? 1 : 0;
+      const bi = b.id.toLowerCase().includes(q) ? 1 : 0;
+      if (ai !== bi) return bi - ai;
+    }
+    let va = a[k], vb = b[k];
+    if (va == null) va = ''; if (vb == null) vb = '';
+    if (typeof va === 'string') return va.localeCompare(vb) * dir;
+    return (va - vb) * dir;
+  });
+  // 时间窗口：只保留窗口内至少有一天有用量的会话
+  if (state.from || state.to) {
+    const win = { from: state.from, to: state.to };
+    arr = arr.filter(s => Object.keys(s.dayUsage).some(d => inDayWindow(d, win)));
+  }
+  return arr;
+}
+
+// ---------- 渲染 ----------
+function render() {
+  const win = { from: state.from, to: state.to };
+  const all = aggregate(state.data.sessions, state.prices, win);
+  const view = aggregate(filteredSessions(), state.prices, win);
+
+  const t = view.totals;
+  const denom = t.cacheRead + t.input;
+  const hitRate = denom > 0 ? (t.cacheRead / denom * 100) : 0;
+  document.getElementById('cards').innerHTML = [
+    ['总 token', fmt(t.totalTokens), fmtFull(t.totalTokens)],
+    ['输入(未命中)', fmt(t.input), fmtFull(t.input)],
+    ['输出', fmt(t.output), fmtFull(t.output)],
+    ['缓存命中', fmt(t.cacheRead), fmtFull(t.cacheRead)],
+    ['缓存命中率', hitRate.toFixed(1) + '%', ''],
+    ['花费', fmtMoney(t.cost), ''],
+    ['会话数', String(filteredSessions().length), ''],
+    ['消息数', fmt(t.messages), fmtFull(t.messages)],
+  ].map(([k, v, full], i) => `<div class="card ${k === '花费' ? 'cost' : ''}"><div class="k">${k}</div><div class="v">${v} <small>${full}</small></div></div>`).join('');
+
+  document.querySelector('#wsTable tbody').innerHTML = all.workspaces.map(w => `
+    <tr class="clickable ${state.workspace === w.cwd ? 'active' : ''}" data-cwd="${esc(w.cwd)}">
+      <td class="path" title="${esc(w.cwd)}">${esc(w.cwd)}</td>
+      <td class="num">${w.sessions}</td>
+      <td class="num">${fmt(w.totalTokens)}</td>
+      <td class="num">${fmt(w.input)}</td>
+      <td class="num">${fmt(w.output)}</td>
+      <td class="num">${fmt(w.cacheRead)}</td>
+      <td class="num money">${fmtMoney(w.cost)}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="empty">无数据</td></tr>';
+
+  const rows = filteredSessions();
+  document.getElementById('sessTag').textContent =
+    state.workspace === 'ALL' ? `全部 ${rows.length} 个` : `${state.workspace} · ${rows.length} 个`;
+  const dayTag = document.getElementById('dayTag');
+  if (dayTag) dayTag.textContent = (state.from || state.to)
+    ? `窗口 ${state.from || '最早'} ~ ${state.to || '今天'} · Asia/Shanghai`
+    : '全部工作区 · Asia/Shanghai · 按天花费为估算';
+  document.querySelector('#sessTable tbody').innerHTML = rows.map(s => {
+    const wu = sessionWindowUsage(s, win);
+    const hr = (wu.cacheRead + wu.input) > 0 ? (wu.cacheRead / (wu.cacheRead + wu.input) * 100) : 0;
+    let top = '-', max = -1;
+    for (const [m, u] of Object.entries(s.modelUsage)) if (u.totalTokens > max) { max = u.totalTokens; top = m; }
+    return `<tr>
+      <td title="id: ${esc(s.id)} · ${esc(s.name)}">${esc(s.name)}</td>
+      <td class="path" title="${esc(s.cwd)}">${esc(s.cwd)}</td>
+      <td class="num">${fmt(wu.totalTokens)}</td>
+      <td class="num">${fmt(wu.input)}</td>
+      <td class="num">${fmt(wu.output)}</td>
+      <td class="num">${fmt(wu.cacheRead)}</td>
+      <td class="num">${hr.toFixed(1)}%</td>
+      <td class="num">${s.messages}</td>
+      <td class="num money">${fmtMoney(sessionCost(s, state.prices))}</td>
+      <td>${esc(top)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="10" class="empty">无匹配会话</td></tr>';
+
+  renderBars(document.getElementById('days'), view.days, 40);
+  renderBars(document.getElementById('models'), view.models, 20);
+  renderBars(document.getElementById('providers'), view.providers, 20);
+}
+
+function renderBars(el, items, limit) {
+  if (!items.length) { el.innerHTML = '<div class="empty">无数据</div>'; return; }
+  const list = items.slice(0, limit);
+  const max = list[0].totalTokens || 1;
+  el.innerHTML = list.map(it => {
+    const pct = (it.totalTokens / max * 100).toFixed(2);
+    const sub = `in ${fmt(it.input)} · out ${fmt(it.output)} · R ${fmt(it.cacheRead)} · <span class="money">${fmtMoney(it.cost)}</span>`;
+    return `<div class="bar-row">
+      <div class="bar-label" title="${esc(it.key)}">${esc(it.key)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+      <div class="bar-val">${fmt(it.totalTokens)}<span class="bar-sub">${sub}</span></div>
+    </div>`;
+  }).join('');
+}
+
+// ---------- 价格表 ----------
+function allModels() {
+  const set = new Set();
+  for (const s of state.data.sessions) for (const m of Object.keys(s.modelUsage)) set.add(m);
+  for (const m of Object.keys(DEFAULTS)) set.add(m);
+  for (const m of Object.keys(state.prices)) set.add(m);
+  return [...set].sort();
+}
+function buildPriceTable() {
+  const models = allModels();
+  const prices = state.prices;
+  const cell = (m, f, v) => `<td><input type="number" step="0.0001" min="0" value="${v}" data-m="${esc(m)}" data-f="${f}"></td>`;
+  document.querySelector('#priceTable tbody').innerHTML = models.map(m => {
+    const p = prices[m] || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    return `<tr>
+      <td class="path" title="${esc(m)}">${esc(m)}</td>
+      ${cell(m, 'input', p.input)} ${cell(m, 'output', p.output)} ${cell(m, 'cacheRead', p.cacheRead)} ${cell(m, 'cacheWrite', p.cacheWrite)}
+      <td><button class="del" data-m="${esc(m)}" title="移除">×</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty">无</td></tr>';
+}
+
+// ---------- 交互 ----------
+function buildWsSelect() {
+  const sel = document.getElementById('ws');
+  const cwds = [...new Set(state.data.sessions.map(s => s.cwd))].sort();
+  sel.innerHTML = `<option value="ALL">全部工作区</option>` +
+    cwds.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  sel.dataset.built = '1';
+  sel.addEventListener('change', () => { state.workspace = sel.value; render(); });
+}
+document.getElementById('refresh').addEventListener('click', load);
+document.getElementById('search').addEventListener('input', e => { state.search = e.target.value; render(); });
+// ---------- 时间范围选择器（单框单月日期范围）----------
+const cal = { open: false, view: null, start: null, end: null, hover: null };
+const elRange = document.getElementById('range');
+const elPop = document.getElementById('rangePop');
+const elText = document.getElementById('rangeText');
+const elClear = document.getElementById('rangeClear');
+const elGrid = document.getElementById('calGrid');
+const elTitle = document.getElementById('calTitle');
+const elTrigger = document.getElementById('rangeTrigger');
+
+function ymd(y, m, d) { return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+function parseYmd(s) { if (!s) return null; const [y, m, d] = s.split('-').map(Number); return { y, m: m - 1, d }; }
+function todayStr() { const t = new Date(); return ymd(t.getFullYear(), t.getMonth(), t.getDate()); }
+function addMonths(y, m, delta) { const nm = m + delta; const ny = y + Math.floor(nm / 12); return { y: ny, m: ((nm % 12) + 12) % 12 }; }
+function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+function inRange(ds) {
+  const a = cal.start, b = cal.end || cal.hover;
+  if (a && b) { if (a <= ds && ds <= b) return true; if (b <= ds && ds <= a) return true; }
+  return false;
+}
+function renderCalendar() {
+  if (!cal.view) cal.view = parseYmd(state.from) || parseYmd(state.to) || parseYmd(todayStr());
+  const y = cal.view.y, m = cal.view.m;
+  elTitle.textContent = `${y}年${m + 1}月`;
+  const wd = ['日', '一', '二', '三', '四', '五', '六'];
+  const first = new Date(y, m, 1).getDay();
+  const dim = daysInMonth(y, m);
+  const t = todayStr();
+  let h = wd.map(w => `<div class="range-wd">${w}</div>`).join('');
+  for (let i = 0; i < first; i++) h += `<div class="range-day empty"></div>`;
+  for (let d = 1; d <= dim; d++) {
+    const ds = ymd(y, m, d);
+    const cls = ['range-day'];
+    if (ds === t) cls.push('today');
+    if (ds === cal.start) cls.push('start');
+    if (ds === cal.end) cls.push('end');
+    if (inRange(ds)) cls.push('in');
+    h += `<div class="${cls.join(' ')}" data-d="${ds}">${d}</div>`;
+  }
+  elGrid.innerHTML = h;
+}
+function updateRangeTrigger() {
+  const from = cal.open ? (cal.start || '') : (state.from || '');
+  const to = cal.open ? (cal.end || '') : (state.to || '');
+  if (from || to) {
+    elText.textContent = (from || '最早') + ' ~ ' + (to || (cal.open ? '选择结束' : '今天'));
+    elClear.hidden = false; elTrigger.classList.add('has-value');
+  } else {
+    elText.textContent = '时间范围';
+    elClear.hidden = true; elTrigger.classList.remove('has-value');
+  }
+}
+function openCal() {
+  cal.open = true; cal.start = state.from || null; cal.end = state.to || null; cal.hover = null;
+  cal.view = parseYmd(state.from) || parseYmd(state.to) || parseYmd(todayStr());
+  elPop.hidden = false; renderCalendar(); updateRangeTrigger();
+}
+function closeCal() { cal.open = false; elPop.hidden = true; updateRangeTrigger(); }
+function applyRange() { state.from = cal.start || ''; state.to = cal.end || ''; closeCal(); render(); }
+function pickDay(ds) {
+  if (!cal.start || (cal.start && cal.end)) { cal.start = ds; cal.end = null; cal.hover = null; }
+  else if (ds < cal.start) { cal.start = ds; }
+  else { cal.end = ds; }
+  renderCalendar(); updateRangeTrigger();
+  if (cal.start && cal.end) applyRange();
+}
+// 悬停只切换高亮 class，绝不重建 DOM——否则会把你要点的格子销毁，导致 click 落空（选不中）
+function previewHover(ds) {
+  if (!cal.start || cal.end) return;
+  cal.hover = ds;
+  elGrid.querySelectorAll('.range-day[data-d]').forEach(cell => {
+    const d = cell.dataset.d;
+    cell.classList.toggle('in', inRange(d) && d !== cal.start && d !== cal.end);
+  });
+}
+elTrigger.addEventListener('click', e => { e.stopPropagation(); cal.open ? closeCal() : openCal(); });
+elClear.addEventListener('click', e => {
+  e.stopPropagation(); cal.start = null; cal.end = null; state.from = ''; state.to = '';
+  updateRangeTrigger(); render();
+});
+// 关键：点日期阻止冒泡。否则 renderCalendar 重建 DOM 后，冒泡到 document 的关闭监听发现目标已脱离，会误关弹层
+elGrid.addEventListener('click', e => {
+  e.stopPropagation();
+  const t = e.target.closest('.range-day'); if (t && t.dataset.d) pickDay(t.dataset.d);
+});
+elGrid.addEventListener('mouseover', e => {
+  const t = e.target.closest('.range-day'); if (t && t.dataset.d) previewHover(t.dataset.d);
+});
+elGrid.addEventListener('mouseleave', () => {
+  cal.hover = null;
+  elGrid.querySelectorAll('.range-day.in').forEach(cell => cell.classList.remove('in'));
+});
+document.getElementById('calPrev').addEventListener('click', e => { e.stopPropagation(); cal.view = addMonths(cal.view.y, cal.view.m, -1); renderCalendar(); });
+document.getElementById('calNext').addEventListener('click', e => { e.stopPropagation(); cal.view = addMonths(cal.view.y, cal.view.m, 1); renderCalendar(); });
+document.getElementById('rangeApply').addEventListener('click', e => { e.stopPropagation(); applyRange(); });
+document.getElementById('rangePresets').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return; e.stopPropagation();
+  const p = b.dataset.p;
+  if (p === 'all') { cal.start = null; cal.end = null; state.from = ''; state.to = ''; }
+  else {
+    const n = Number(p), t = new Date(), s = new Date(t);
+    s.setDate(t.getDate() - (n - 1));
+    cal.start = ymd(s.getFullYear(), s.getMonth(), s.getDate());
+    cal.end = ymd(t.getFullYear(), t.getMonth(), t.getDate());
+    state.from = cal.start; state.to = cal.end;
+  }
+  closeCal(); render();
+});
+document.addEventListener('click', e => { if (cal.open && !elRange.contains(e.target)) closeCal(); });
+updateRangeTrigger();
+document.getElementById('cur').addEventListener('change', e => { state.currency = e.target.value; saveCur(state.currency); savePrices(); render(); });
+document.getElementById('auto').addEventListener('change', e => {
+  state.auto = e.target.checked;
+  if (state.auto) state._timer = setInterval(load, 30000); else clearInterval(state._timer);
+});
+document.getElementById('fillDefaults').addEventListener('click', () => {
+  state.prices = { ...state.prices, ...JSON.parse(JSON.stringify(DEFAULTS)) };
+  savePrices(); buildPriceTable(); render();
+});
+document.getElementById('clearPrices').addEventListener('click', () => {
+  state.prices = {}; savePrices(); buildPriceTable(); render();
+});
+document.getElementById('addBtn').addEventListener('click', () => {
+  const v = document.getElementById('addModel').value.trim();
+  if (!v) return;
+  if (!state.prices[v]) state.prices[v] = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  savePrices(); buildPriceTable(); render();
+  document.getElementById('addModel').value = '';
+});
+document.querySelector('#priceTable tbody').addEventListener('input', e => {
+  const inp = e.target; if (inp.tagName !== 'INPUT') return;
+  const m = inp.dataset.m, f = inp.dataset.f, v = parseFloat(inp.value) || 0;
+  if (!state.prices[m]) state.prices[m] = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  state.prices[m][f] = v; savePrices(); render();
+});
+document.querySelector('#priceTable tbody').addEventListener('click', e => {
+  const b = e.target.closest('.del'); if (!b) return;
+  delete state.prices[b.dataset.m]; savePrices(); buildPriceTable(); render();
+});
+document.querySelectorAll('#wsTable th[data-k], #sessTable th[data-k]').forEach(th => {
+  th.addEventListener('click', () => {
+    const k = th.dataset.k;
+    if (state.sortKey === k) state.sortDir *= -1; else { state.sortKey = k; state.sortDir = -1; }
+    render();
+  });
+});
+document.querySelector('#wsTable tbody').addEventListener('click', e => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const cwd = tr.dataset.cwd;
+  state.workspace = (state.workspace === cwd) ? 'ALL' : cwd;
+  document.getElementById('ws').value = state.workspace;
+  render();
+});
+
+load();
+</script>
+</body>
+</html>
