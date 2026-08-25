@@ -1,0 +1,47 @@
+// 集中状态 + UI 偏好持久化。
+// 注意：价格 / 汇率 / 别名等配置以服务端 prices.json 为唯一事实源，
+// localStorage 只存界面偏好（tab、窗口、币种符号等），避免双写互踩。
+
+const PREF_KEY = 'pits-prefs-v2';
+
+export const state = {
+  data: null, // ApiData
+  tab: 'overview',
+  workspace: 'ALL',
+  search: '',
+  win: null, // {from, to}；首次加载后默认近 30 天
+  auto: false,
+  timer: null,
+  currency: '¥', // 仅影响显示
+  sort: {
+    ws: { key: 'totalTokens', dir: -1 },
+    sess: { key: 'totalTokens', dir: -1 },
+    model: { key: 'totalTokens', dir: -1 },
+  },
+  status: 'loading', // loading | ok | error
+  lastError: '',
+};
+
+export function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
+    if (p.tab) state.tab = p.tab;
+    if (typeof p.workspace === 'string') state.workspace = p.workspace;
+    if (p.currency) state.currency = p.currency;
+    if (typeof p.auto === 'boolean') state.auto = p.auto;
+    if (p.win && typeof p.win === 'object') state.win = { from: p.win.from || '', to: p.win.to || '' };
+  } catch {
+    /* 忽略坏数据 */
+  }
+}
+
+export function savePrefs() {
+  try {
+    localStorage.setItem(
+      PREF_KEY,
+      JSON.stringify({ tab: state.tab, workspace: state.workspace, currency: state.currency, auto: state.auto, win: state.win }),
+    );
+  } catch {
+    /* 存不下就算了 */
+  }
+}
