@@ -100,14 +100,19 @@ export function normalizeModelName(raw: string, aliases: Record<string, string> 
 
 type FileAgg = SessionAgg;
 
-/** 异步解析单个 jsonl 文件 */
-async function parseFileAsync(fp: string, defaultId: string, aliases: Record<string, string>): Promise<FileAgg> {
+/** 异步解析单个 jsonl 文件，返回 [聚合结果, 坏行数] */
+async function parseFileAsync(
+  fp: string,
+  defaultId: string,
+  aliases: Record<string, string>,
+): Promise<[FileAgg, number]> {
   let cwd = '';
   let sessionId = defaultId;
   let name = '';
   let startTs: string | null = null;
   let endTs: string | null = null;
   let messages = 0;
+  let skipped = 0;
   const usage = emptyUsage();
   const dayUsage: Record<string, Usage> = {};
   const modelUsage: Record<string, Usage> = {};
@@ -120,20 +125,23 @@ async function parseFileAsync(fp: string, defaultId: string, aliases: Record<str
     lines = (await readFile(fp, 'utf8')).split('\n');
   } catch {
     if (!name) name = sessionId.slice(0, 8);
-    return {
-      id: sessionId,
-      cwd: '(unknown)',
-      name: name.slice(0, 90),
-      startTs,
-      endTs,
-      messages,
-      ...usage,
-      dayUsage,
-      modelUsage,
-      modelDayUsage,
-      providerUsage,
-      providerModelUsage,
-    };
+    return [
+      {
+        id: sessionId,
+        cwd: '(unknown)',
+        name: name.slice(0, 90),
+        startTs,
+        endTs,
+        messages,
+        ...usage,
+        dayUsage,
+        modelUsage,
+        modelDayUsage,
+        providerUsage,
+        providerModelUsage,
+      },
+      0,
+    ];
   }
 
   for (const raw of lines) {
@@ -143,7 +151,8 @@ async function parseFileAsync(fp: string, defaultId: string, aliases: Record<str
     try {
       e = JSON.parse(line);
     } catch {
-      continue; // 坏行由调用方计数
+      skipped++;
+      continue;
     }
     const ts = typeof e.timestamp === 'string' ? e.timestamp : undefined;
     if (ts) {
@@ -183,20 +192,23 @@ async function parseFileAsync(fp: string, defaultId: string, aliases: Record<str
   }
 
   if (!name) name = sessionId.slice(0, 8);
-  return {
-    id: sessionId,
-    cwd: cwd || '(unknown)',
-    name: name.slice(0, 90),
-    startTs,
-    endTs,
-    messages,
-    ...usage,
-    dayUsage,
-    modelUsage,
-    modelDayUsage,
-    providerUsage,
-    providerModelUsage,
-  };
+  return [
+    {
+      id: sessionId,
+      cwd: cwd || '(unknown)',
+      name: name.slice(0, 90),
+      startTs,
+      endTs,
+      messages,
+      ...usage,
+      dayUsage,
+      modelUsage,
+      modelDayUsage,
+      providerUsage,
+      providerModelUsage,
+    },
+    skipped,
+  ];
 }
 
 // 文件级增量缓存：path -> { sig, agg }
@@ -260,7 +272,9 @@ export async function scan(aliases: Record<string, string> = {}): Promise<ScanRe
       if (cached && cached.sig === sig && cached.agg) {
         agg = cached.agg;
       } else {
-        agg = await parseFileAsync(fp, defaultId, aliases);
+        const [parsed, skipped] = await parseFileAsync(fp, defaultId, aliases);
+        agg = parsed;
+        skippedLines += skipped;
         fileCache.set(fp, { sig, agg });
         scannedFiles++;
         if (++sinceYield >= YIELD_EVERY) {

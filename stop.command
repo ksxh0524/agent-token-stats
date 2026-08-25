@@ -15,13 +15,11 @@ if [ -f "$PIDFILE" ]; then
   rm -f "$PIDFILE"
 fi
 
-# 兜底：PID 文件丢失但进程仍在时，按命令行特征清理
+# 兜底：PID 文件丢失但进程仍在时，精确匹配本项目路径的 server 进程
 if [ "$stopped" -eq 0 ]; then
-  if pkill -f "src/server.ts" 2>/dev/null; then
+  if pkill -f "pi-token-stats/src/server.ts" 2>/dev/null; then
     echo "🛑 已通过 pkill 停止残留进程"
   else
     echo "ℹ️  没有运行中的服务器"
   fi
 fi
-
-# 端口随进程退出自动释放，无需额外清理（原先硬编码端口的兜底从不命中，已移除）

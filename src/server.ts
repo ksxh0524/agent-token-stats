@@ -13,7 +13,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 
 const PORT = Number(process.env.PORT) || 32022;
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
-const PRICES_FILE = fileURLToPath(new URL('../prices.json', import.meta.url));
+const PRICES_FILE = process.env.PRICES_FILE || fileURLToPath(new URL('../prices.json', import.meta.url));
 
 const BODY_LIMIT = 256 * 1024;
 const MAX_PRICE_KEYS = 5000;

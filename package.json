@@ -11,7 +11,7 @@
     "start": "node --experimental-strip-types src/server.ts",
     "dev": "node --experimental-strip-types --watch src/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/",
+    "test": "node --test \"test/*.test.js\" \"test/*.test.ts\"",
     "fmt": "prettier --write \"src/**/*.ts\" \"public/js/*.js\" \"test/**/*\""
   },
   "devDependencies": {

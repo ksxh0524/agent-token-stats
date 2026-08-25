@@ -113,16 +113,17 @@ export function aggregate({ sessions, prices = {}, win = null, aliases = {} }) {
           mu.sessions++;
         }
         addTo(mu, u);
+        const useReal = u.realCost > 0;
         const e = estCost(u, price);
-        const c = u.realCost > 0 ? u.realCost : e;
-        mu.estCost += e;
+        const c = useReal ? u.realCost : e;
+        mu.estCost += useReal ? 0 : e; // est 只累计实际参与合计的部分，保证 实+估=总
         mu.cost += c;
-        sessionEst += e;
+        sessionEst += useReal ? 0 : e;
         sessionBlended += c;
         let dc = dayCostAcc.get(d);
         if (!dc) dayCostAcc.set(d, (dc = { real: 0, est: 0, cost: 0 }));
-        dc.real += u.realCost || 0;
-        dc.est += e;
+        dc.real += useReal ? u.realCost : 0;
+        dc.est += useReal ? 0 : e;
         dc.cost += c;
       }
     }

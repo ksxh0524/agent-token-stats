@@ -1,0 +1,3 @@
+{"type":"session","id":"sid-b","timestamp":"2026-08-24T09:00:00Z","cwd":"/tmp/projB"}
+{"type":"message","timestamp":"2026-08-24T09:00:02Z","message":{"role":"user","content":[{"type":"text","text":"build the thing"}]}}
+{"type":"message","timestamp":"2026-08-24T09:00:10Z","message":{"role":"assistant","model":"weird-name","provider":"huoshan-coding-plan","usage":{"input":7,"output":3}}}
