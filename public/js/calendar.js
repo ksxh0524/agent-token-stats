@@ -72,7 +72,7 @@ export function mountRangePicker(container, { win, onChange }) {
   }
 
   function renderCal() {
-    if (!cal.view) cal.view = parseYmd(win().from) || parseYmd(win().to) || parseYmd(todayStr());
+    if (!cal.view) cal.view = parseYmd(win().to) || parseYmd(win().from) || parseYmd(todayStr());
     const { y, m } = cal.view;
     title.textContent = `${y}年${m + 1}月`;
     const wd = ['日', '一', '二', '三', '四', '五', '六'];
@@ -102,7 +102,7 @@ export function mountRangePicker(container, { win, onChange }) {
     cal.start = win().from || null;
     cal.end = win().to || null;
     cal.hover = null;
-    cal.view = parseYmd(win().from) || parseYmd(win().to) || parseYmd(todayStr());
+    cal.view = parseYmd(win().to) || parseYmd(win().from) || parseYmd(todayStr());
     pop.hidden = false;
     renderCal();
     renderText();

@@ -103,8 +103,8 @@ function renderAll() {
     renderCards($('#cards'), viewAgg.totals, viewAgg.totals.sessions, mf);
     $('#wsTag').textContent = `${viewAgg.workspaces.length} 个工作区`;
     renderWorkspaceTable($('#wsTable'), viewAgg.workspaces, state.sort.ws, state.workspace, mf);
-    $('#dayTag').textContent = `窗口 ${win.from || '最早'} ~ ${win.to || '今天'} · Asia/Shanghai`;
-    renderBars($('#days'), viewAgg.days, 60, mf);
+    $('#modelBarTag').textContent = `${viewAgg.models.length} 个模型 · 窗口 ${win.from || '最早'} ~ ${win.to || '今天'}`;
+    renderBars($('#models'), viewAgg.models, 15, mf);
     renderBars($('#providers'), viewAgg.providers, 20, mf);
   }
 

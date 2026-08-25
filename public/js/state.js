@@ -29,7 +29,7 @@ export function loadPrefs() {
     if (typeof p.workspace === 'string') state.workspace = p.workspace;
     if (p.currency) state.currency = p.currency;
     if (typeof p.auto === 'boolean') state.auto = p.auto;
-    if (p.win && typeof p.win === 'object') state.win = { from: p.win.from || '', to: p.win.to || '' };
+    // 时间窗口不持久化：每次打开都按「今天」重算近 30 天
   } catch {
     /* 忽略坏数据 */
   }
@@ -39,7 +39,7 @@ export function savePrefs() {
   try {
     localStorage.setItem(
       PREF_KEY,
-      JSON.stringify({ tab: state.tab, workspace: state.workspace, currency: state.currency, auto: state.auto, win: state.win }),
+      JSON.stringify({ tab: state.tab, workspace: state.workspace, currency: state.currency, auto: state.auto }),
     );
   } catch {
     /* 存不下就算了 */

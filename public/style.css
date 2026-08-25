@@ -41,6 +41,7 @@ button:hover { filter: brightness(0.97); }
   background: #fdecea; color: var(--danger); border-bottom: 1px solid #f5c6c0;
   padding: 8px 24px; font-size: 13px;
 }
+#connBanner[hidden] { display: none; }
 #connBanner button { border-color: var(--danger); color: var(--danger); background: transparent; }
 
 #tabs {

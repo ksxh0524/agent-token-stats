@@ -65,8 +65,8 @@
       </table>
     </section>
     <section class="panel">
-      <h2>按天 <span class="tag" id="dayTag"></span></h2>
-      <div id="days"></div>
+      <h2>按模型 <span class="tag" id="modelBarTag"></span> · <span class="tag">完整表格见「模型明细」</span></h2>
+      <div id="models"></div>
     </section>
     <section class="panel">
       <h2>按提供商 <span class="tag">窗口内活跃会话 · 全会话口径（该维度未按天拆分）</span></h2>
@@ -170,7 +170,7 @@
       <ul class="note-list">
         <li>数据来源：~/.pi/agent/sessions 下的 *.jsonl（可用环境变量 PI_SESSIONS_DIR 覆盖）。</li>
         <li>时间窗口对所有维度一致生效：窗口内没有用量的模型 / 工作区 / 会话不会出现。</li>
-        <li>「实」= 会话数据中 provider 记录的真实费用；「估」= 无记录时按上方单价推算。部分套餐（huoshan-*-plan）不按量计费，估算仅供参考。</li>
+        <li>「实」= 会话数据中 provider 记录的真实费用；「估」= 无记录时按上方单价推算（均为按量口径）。</li>
         <li>消息数按会话在窗口内的 token 占比折算。</li>
       </ul>
     </details>
