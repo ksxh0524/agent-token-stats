@@ -43,7 +43,13 @@ before(async () => {
 
   child = spawn(process.execPath, ['--experimental-strip-types', 'src/server.ts'], {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), PI_SESSIONS_DIR: sessionsDir, PRICES_FILE: pricesFile },
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      PI_SESSIONS_DIR: sessionsDir,
+      PRICES_FILE: pricesFile,
+      OPENCODE_DB: join(tmpdir(), `pits-missing-${Date.now()}.db`),
+    },
     stdio: 'ignore',
   });
   await waitForHealth();
