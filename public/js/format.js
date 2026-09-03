@@ -1,10 +1,15 @@
 // 纯格式化工具（无 DOM 依赖，可被 node:test 直接测试）
 
+// 中文数量级：万（1e4）/ 亿（1e8）。≥100 不带小数，其余保留 1 位并去掉尾零（14亿 / 1.4亿 / 3500万）
+function zhUnit(v, unit) {
+  const x = v >= 100 ? Math.round(v) : parseFloat(v.toFixed(1));
+  return String(x) + unit;
+}
+
 export function fmt(n) {
   n = Number(n) || 0;
-  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  if (n >= 1e8) return zhUnit(n / 1e8, '亿');
+  if (n >= 1e4) return zhUnit(n / 1e4, '万');
   return String(Math.round(n));
 }
 

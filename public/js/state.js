@@ -6,7 +6,7 @@ const PREF_KEY = 'pits-prefs-v2';
 
 export const state = {
   data: null, // ApiData
-  tab: 'overview',
+  source: 'pi', // pi | opencode（两个 tab，数据分开）
   workspace: 'ALL',
   search: '',
   win: null, // {from, to}；首次加载后默认近 30 天
@@ -25,11 +25,11 @@ export const state = {
 export function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
-    if (p.tab) state.tab = p.tab;
+    if (p.source === 'pi' || p.source === 'opencode') state.source = p.source;
     if (typeof p.workspace === 'string') state.workspace = p.workspace;
     if (p.currency) state.currency = p.currency;
     if (typeof p.auto === 'boolean') state.auto = p.auto;
-    // 时间窗口不持久化：每次打开都按「今天」重算近 30 天
+    // 时间窗口不持久化：每次打开都按「今天」重算近 3 天
   } catch {
     /* 忽略坏数据 */
   }
@@ -39,7 +39,12 @@ export function savePrefs() {
   try {
     localStorage.setItem(
       PREF_KEY,
-      JSON.stringify({ tab: state.tab, workspace: state.workspace, currency: state.currency, auto: state.auto }),
+      JSON.stringify({
+        source: state.source,
+        workspace: state.workspace,
+        currency: state.currency,
+        auto: state.auto,
+      }),
     );
   } catch {
     /* 存不下就算了 */

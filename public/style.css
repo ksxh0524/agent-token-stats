@@ -44,20 +44,29 @@ button:hover { filter: brightness(0.97); }
 #connBanner[hidden] { display: none; }
 #connBanner button { border-color: var(--danger); color: var(--danger); background: transparent; }
 
-#tabs {
+/* 数据源 tab：pi / opencode */
+#srcTabs {
   display: flex; gap: 4px; padding: 10px 24px 0;
   background: var(--card); border-bottom: 1px solid var(--border);
 }
-#tabs button {
-  border: none; background: transparent; padding: 8px 16px;
+#srcTabs button {
+  border: none; background: transparent; padding: 8px 18px;
   cursor: pointer; color: var(--muted); border-radius: 8px 8px 0 0;
-  border-bottom: 2px solid transparent; font-weight: 500;
+  border-bottom: 2px solid transparent; font-weight: 500; font-size: 14px;
 }
-#tabs button:hover { color: var(--text); }
-#tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+#srcTabs button:hover { color: var(--text); }
+#srcTabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* 设置面板：顶部齿轮展开，铺在 header 下方 */
+#settingsPanel {
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  padding: 14px 24px; display: grid; gap: 12px;
+  max-height: 72vh; overflow: auto;
+}
+#settingsPanel[hidden] { display: none; }
+#settingsPanel details.cfg { margin-bottom: 0; }
 
 main { padding: 20px 24px 60px; }
-#tab-overview > .panel:first-of-type { margin-top: 16px; }
 section.panel {
   background: var(--card); border: 1px solid var(--border); border-radius: 12px;
   padding: 16px 18px; margin-bottom: 20px;
@@ -84,6 +93,8 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.path { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .table-scroll { max-height: 65vh; overflow: auto; }
 .table-scroll thead th, .price-table-wrap thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
+/* 会话明细：固定高度，内部滚动 */
+.table-scroll.sess-scroll { max-height: 440px; }
 #modelTable tfoot td, #modelTable tfoot th {
   border-top: 2px solid var(--border); border-bottom: none; font-weight: 600;
   position: sticky; bottom: 0; background: var(--card);

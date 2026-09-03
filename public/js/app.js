@@ -16,6 +16,11 @@ import { esc } from './format.js';
 
 const $ = (sel) => document.querySelector(sel);
 
+let rangePicker = null; // mountRangePicker 句柄（bind() 里赋值），用于首次加载后刷新默认窗口显示
+
+// 工作区展示阈值：窗口内总 token 低于该值的工作区不显示（表格 + 下拉），过滤噪音
+const MIN_WS_TOKENS = 1e6;
+
 // ---------- 默认窗口：近 30 天（Asia/Shanghai，与后端按天口径一致） ----------
 function shanghaiToday(generatedAt) {
   return new Date(generatedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
@@ -26,7 +31,7 @@ function addDaysStr(ds, delta) {
   t.setUTCDate(t.getUTCDate() + delta);
   return t.toISOString().slice(0, 10);
 }
-function defaultWin(days = 30, today = shanghaiToday(new Date().toISOString())) {
+function defaultWin(days = 3, today = shanghaiToday(new Date().toISOString())) {
   return { from: addDaysStr(today, -(days - 1)), to: today };
 }
 
@@ -39,15 +44,21 @@ async function load() {
     const data = await getData();
     state.data = data;
     state.status = 'ok';
-    if (!state.win) state.win = defaultWin(30, shanghaiToday(data.generatedAt));
+    if (!state.win) {
+      state.win = defaultWin(3, shanghaiToday(data.generatedAt)); // 默认近 3 天
+      rangePicker?.refresh(); // 首次加载后让选择器立即显示默认的「近3天」
+    }
     $('#connBanner').hidden = true;
     syncCurrencySelect();
+    updateSrcTabs();
     buildWsSelect();
     buildSettings();
     renderAll();
     $('#meta').textContent =
       `最后更新 ${new Date(data.generatedAt).toLocaleString('zh-CN')} · ${data.sessions.length} 会话` +
-      (data.skippedLines ? ` · 坏行 ${data.skippedLines}` : '');
+      ` · pi ${data.sources?.pi?.sessions ?? 0} / opencode ${data.sources?.opencode?.sessions ?? 0}` +
+      (data.skippedLines ? ` · 坏行 ${data.skippedLines}` : '') +
+      (data.sources?.opencode?.error ? ` · opencode 源异常` : '');
   } catch (err) {
     state.status = 'error';
     const banner = $('#connBanner');
@@ -64,7 +75,8 @@ function syncCurrencySelect() {
 
 // ---------- 过滤 ----------
 function baseSessions() {
-  let arr = state.data?.sessions || [];
+  // 数据源严格分开：只看当前 tab 对应的会话
+  let arr = (state.data?.sessions || []).filter((s) => s.source === state.source);
   if (state.workspace !== 'ALL') arr = arr.filter((s) => s.cwd === state.workspace);
   const q = state.search.trim().toLowerCase();
   if (!q) return arr;
@@ -80,12 +92,6 @@ function baseSessions() {
 }
 
 // ---------- 渲染 ----------
-function switchTab(tab) {
-  state.tab = tab;
-  savePrefs();
-  renderAll();
-}
-
 function renderAll() {
   if (!state.data) return;
   const mf = moneyFmt(state);
@@ -93,44 +99,83 @@ function renderAll() {
   const base = baseSessions();
   const aliases = state.data.modelAliases;
 
-  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === state.tab));
-  for (const sec of ['overview', 'models', 'sessions', 'settings']) {
-    $(`#tab-${sec}`).hidden = sec !== state.tab;
-  }
+  const viewAgg = aggregate({ sessions: base, prices: state.data.prices, win, aliases });
 
-  if (state.tab === 'overview') {
-    const viewAgg = aggregate({ sessions: base, prices: state.data.prices, win, aliases });
-    renderCards($('#cards'), viewAgg.totals, viewAgg.totals.sessions, mf);
-    $('#wsTag').textContent = `${viewAgg.workspaces.length} 个工作区`;
-    renderWorkspaceTable($('#wsTable'), viewAgg.workspaces, state.sort.ws, state.workspace, mf);
-    $('#modelBarTag').textContent = `${viewAgg.models.length} 个模型 · 窗口 ${win.from || '最早'} ~ ${win.to || '今天'}`;
-    renderBars($('#models'), viewAgg.models, 15, mf);
-    renderBars($('#providers'), viewAgg.providers, 20, mf);
-  }
+  // 总览
+  renderCards($('#cards'), viewAgg.totals, viewAgg.totals.sessions, mf);
+  const wsRows = viewAgg.workspaces.filter((w) => w.totalTokens >= MIN_WS_TOKENS);
+  const wsHidden = viewAgg.workspaces.length - wsRows.length;
+  $('#wsTag').textContent =
+    `${wsRows.length} 个工作区` + (wsHidden ? ` · 已隐藏 ${wsHidden} 个小额（<${MIN_WS_TOKENS / 1e4}万 token）` : '');
+  renderWorkspaceTable($('#wsTable'), wsRows, state.sort.ws, state.workspace, mf);
+  $('#modelBarTag').textContent = `${viewAgg.models.length} 个模型 · 窗口 ${win.from || '最早'} ~ ${win.to || '今天'}`;
+  renderBars($('#models'), viewAgg.models, 15, mf);
+  renderBars($('#providers'), viewAgg.providers, 20, mf);
 
-  if (state.tab === 'models') {
-    const agg = aggregate({ sessions: base, prices: state.data.prices, win, aliases });
-    $('#modelTag').textContent =
-      `${agg.models.length} 个模型 · 窗口 ${win.from || '最早'} ~ ${win.to || '今天'}` +
-      (state.workspace !== 'ALL' ? ` · 仅工作区 ${state.workspace}` : '');
-    renderModelTable($('#modelTable'), agg.models, state.sort.model, agg.totals.totalTokens, mf);
-    const rateNote =
-      state.currency === '¥' ? '' : `；显示币种 ${state.currency} 按 1 ${state.currency} = ${state.data.rates?.[state.currency] ?? '?'} ¥ 换算`;
-    $('#costNote').textContent =
-      `单价以 ¥ 计价。「实」= 数据中记录的真实费用；「估」= 无真实费用时按配置单价推算${rateNote}。`;
-  }
+  // 模型明细
+  $('#modelTag').textContent =
+    `${viewAgg.models.length} 个模型 · 窗口 ${win.from || '最早'} ~ ${win.to || '今天'}` +
+    (state.workspace !== 'ALL' ? ` · 仅工作区 ${state.workspace}` : '');
+  renderModelTable($('#modelTable'), viewAgg.models, state.sort.model, viewAgg.totals.totalTokens, mf);
+  const rateNote =
+    state.currency === '¥' ? '' : `；显示币种 ${state.currency} 按 1 ${state.currency} = ${state.data.rates?.[state.currency] ?? '?'} ¥ 换算`;
+  $('#costNote').textContent =
+    `单价以 ¥ 计价。「实」= 数据中记录的真实费用；「估」= 无真实费用时按配置单价推算${rateNote}。`;
 
-  if (state.tab === 'sessions') {
-    const enriched = base.filter((s) => sessionInWindow(s, win)).map((s) => enrichSession(s, state.data.prices, win));
-    $('#sessTag').textContent = `${enriched.length} 个会话 · 窗口 ${win.from || '最早'} ~ ${win.to || '今天'}`;
-    renderSessionTable($('#sessTable'), enriched, state.sort.sess, mf);
-  }
+  // 会话明细
+  const enriched = base.filter((s) => sessionInWindow(s, win)).map((s) => enrichSession(s, state.data.prices, win));
+  $('#sessTag').textContent = `${enriched.length} 个会话 · 窗口 ${win.from || '最早'} ~ ${win.to || '今天'}`;
+  renderSessionTable($('#sessTable'), enriched, state.sort.sess, mf);
 }
 
-// ---------- 工作区下拉 ----------
+// ---------- 数据源 tab / 工作区下拉 ----------
+// 数据源 tab：标签带会话数；当前源不可用时自动落到有数据的源
+function updateSrcTabs() {
+  const stats = state.data?.sources || {};
+  const sessions = state.data?.sessions || [];
+  const available = ['pi', 'opencode'].filter(
+    (k) => (stats[k] && stats[k].enabled) || sessions.some((s) => s.source === k),
+  );
+  if (!available.includes(state.source)) {
+    state.source = available[0] || 'pi';
+    savePrefs();
+  }
+  document.querySelectorAll('#srcTabs button').forEach((b) => {
+    const k = b.dataset.src;
+    const n = stats[k]?.sessions ?? sessions.filter((s) => s.source === k).length;
+    b.classList.toggle('active', k === state.source);
+    b.textContent = `${k}（${n}）`;
+  });
+}
+
+function switchSource(src) {
+  if (state.source === src) return;
+  state.source = src;
+  // 切换数据源后工作区列表会变化，重置避免残留失效筛选
+  if (state.workspace !== 'ALL' && !buildWsOptions().includes(state.workspace)) state.workspace = 'ALL';
+  savePrefs();
+  updateSrcTabs(); // 刷新 tab 高亮
+  buildWsSelect();
+  renderAll();
+}
+
+// 当前数据源下的工作区选项（下拉与来源切换校验共用）。
+// 只保留全量 token ≥ MIN_WS_TOKENS 的工作区，过滤一次性小目录噪音；已选中的始终保留。
+function buildWsOptions() {
+  const sessions = state.data?.sessions || [];
+  const byCwd = new Map();
+  for (const s of sessions) {
+    if (s.source !== state.source) continue;
+    byCwd.set(s.cwd, (byCwd.get(s.cwd) || 0) + (s.totalTokens || 0));
+  }
+  const opts = [...byCwd.entries()].filter(([, t]) => t >= MIN_WS_TOKENS).map(([c]) => c);
+  if (state.workspace !== 'ALL' && !opts.includes(state.workspace)) opts.push(state.workspace);
+  return opts.sort();
+}
+
 function buildWsSelect() {
   const sel = $('#ws');
-  const cwds = [...new Set((state.data.sessions || []).map((s) => s.cwd))].sort();
+  const cwds = buildWsOptions();
   sel.innerHTML =
     `<option value="ALL">全部工作区</option>` + cwds.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   if (state.workspace !== 'ALL' && !cwds.includes(state.workspace)) state.workspace = 'ALL';
@@ -253,8 +298,17 @@ function bind() {
   $('#refresh').addEventListener('click', load);
   $('#connRetry').addEventListener('click', load);
   $('#auto').addEventListener('change', (e) => setAuto(e.target.checked));
-  document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
-  $('#settingsBtn').addEventListener('click', () => switchTab('settings'));
+
+  // 设置面板：齿轮展开/收起
+  const settingsPanel = $('#settingsPanel');
+  $('#settingsBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    settingsPanel.hidden = !settingsPanel.hidden;
+  });
+  document.addEventListener('click', (e) => {
+    if (!settingsPanel.hidden && !settingsPanel.contains(e.target)) settingsPanel.hidden = true;
+  });
+  settingsPanel.addEventListener('click', (e) => e.stopPropagation());
 
   $('#cur').addEventListener('change', (e) => {
     state.currency = e.target.value;
@@ -271,7 +325,11 @@ function bind() {
     }, 150);
   });
 
-  mountRangePicker($('#range'), {
+  document.querySelectorAll('#srcTabs button').forEach((b) =>
+    b.addEventListener('click', () => switchSource(b.dataset.src)),
+  );
+
+  rangePicker = mountRangePicker($('#range'), {
     win: () => state.win || { from: '', to: '' },
     onChange: (w) => {
       state.win = w;

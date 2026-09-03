@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>pi token 消耗看板</title>
+<title>agent-token-stats · token 消耗看板</title>
 <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
 <header>
-  <h1>pi token 消耗看板</h1>
+  <h1>Agent Token 看板</h1>
   <span class="meta" id="meta">加载中…</span>
   <div class="spacer"></div>
   <label class="auto"><input type="checkbox" id="auto" /> 自动刷新(30s)</label>
@@ -30,16 +30,65 @@
   <button id="connRetry">重试</button>
 </div>
 
-<nav id="tabs">
-  <button data-tab="overview" class="active">总览</button>
-  <button data-tab="models">模型明细</button>
-  <button data-tab="sessions">会话明细</button>
-  <button data-tab="settings">设置</button>
+<!-- 设置：顶部齿轮展开，默认收起 -->
+<section id="settingsPanel" hidden>
+  <details class="cfg">
+    <summary>价格配置 <span class="tag">每百万 token 单价 · 以 ¥ 计价 · 默认收起</span></summary>
+    <div class="price-tools">
+      <button id="fillDefaults">填入官方默认价</button>
+      <button id="clearPrices">清空</button>
+      <label>添加模型：<input type="text" id="addModel" placeholder="模型名（归一化后）" /></label>
+      <button id="addBtn">添加</button>
+    </div>
+    <div class="price-table-wrap">
+      <table id="priceTable">
+        <thead><tr>
+          <th>模型</th>
+          <th class="num">输入单价</th>
+          <th class="num">输出单价</th>
+          <th class="num">缓存命中</th>
+          <th class="num">缓存创建</th>
+          <th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="note">花费 = (输入×价 + 输出×价 + 缓存命中×价 + 缓存创建×价) / 1e6。数据里已带真实费用的模型优先显示「实」，无真实费用的按此单价「估」。</p>
+  </details>
+
+  <details class="cfg">
+    <summary>显示汇率 <span class="tag">1 外币 = N ¥，用于把金额换算成所选显示币种</span></summary>
+    <div id="ratesEditor" class="rates"></div>
+    <button id="saveRates" class="primary">保存汇率</button>
+  </details>
+
+  <details class="cfg">
+    <summary>模型别名映射 <span class="tag">把不同写法归一到同一模型（每行：原始名 = 归一名）</span></summary>
+    <textarea id="aliasEditor" rows="8" placeholder="deepseek-ai/DeepSeek-V4-Flash = deepseek-v4-flash&#10;muse-spark-1.2-contributor-free = muse-spark-free"></textarea>
+    <button id="saveAlias" class="primary">保存映射</button>
+    <p class="note">内置规则已自动去组织前缀（如 deepseek-ai/、nvidia/）并小写；此处可覆盖或补充。-free 等后缀默认保留（免费/收费分开计价）。</p>
+  </details>
+
+  <details class="cfg">
+    <summary>数据说明</summary>
+    <ul class="note-list">
+      <li>数据来源：pi = ~/.pi/agent/sessions 下的 *.jsonl（PI_SESSIONS_DIR 可覆盖）；opencode = ~/.local/share/opencode/opencode.db（OPENCODE_DB 可覆盖，只读）。</li>
+      <li>时间窗口对所有维度一致生效：窗口内没有用量的模型 / 工作区 / 会话不会出现。</li>
+      <li>「实」= 会话数据中 provider 记录的真实费用；「估」= 无记录时按上方单价推算（均为按量口径）。</li>
+      <li>消息数按会话在窗口内的 token 占比折算。</li>
+    </ul>
+  </details>
+</section>
+
+<!-- 数据源：pi / opencode 两个 tab，数据严格分开 -->
+<nav id="srcTabs">
+  <button data-src="pi" class="active">pi</button>
+  <button data-src="opencode">opencode</button>
 </nav>
 
 <main>
-  <!-- 总览 -->
-  <section id="tab-overview">
+  <!-- 单页：从上往下依次 总览卡片 → 工作区 → 模型 → 提供商 → 会话明细 -->
+  <section id="overview">
     <div class="cards" id="cards"></div>
     <div class="controls">
       <div id="range"></div>
@@ -65,17 +114,9 @@
       </table>
     </section>
     <section class="panel">
-      <h2>按模型 <span class="tag" id="modelBarTag"></span> · <span class="tag">完整表格见「模型明细」</span></h2>
+      <h2>按模型 <span class="tag" id="modelBarTag"></span></h2>
       <div id="models"></div>
     </section>
-    <section class="panel">
-      <h2>按提供商 <span class="tag">窗口内活跃会话 · 全会话口径（该维度未按天拆分）</span></h2>
-      <div id="providers"></div>
-    </section>
-  </section>
-
-  <!-- 模型明细 -->
-  <section id="tab-models" hidden>
     <section class="panel">
       <h2>模型用量明细 <span class="tag" id="modelTag"></span></h2>
       <div class="table-scroll">
@@ -100,13 +141,13 @@
       </div>
       <p class="note" id="costNote"></p>
     </section>
-  </section>
-
-  <!-- 会话明细 -->
-  <section id="tab-sessions" hidden>
+    <section class="panel">
+      <h2>按提供商 <span class="tag">窗口内活跃会话 · 全会话口径（该维度未按天拆分）</span></h2>
+      <div id="providers"></div>
+    </section>
     <section class="panel">
       <h2>会话明细 <span class="tag" id="sessTag"></span></h2>
-      <div class="table-scroll">
+      <div class="table-scroll sess-scroll">
         <table id="sessTable">
           <thead><tr>
             <th data-k="name">会话名</th>
@@ -124,56 +165,6 @@
         </table>
       </div>
     </section>
-  </section>
-
-  <!-- 设置 -->
-  <section id="tab-settings" hidden>
-    <details class="cfg">
-      <summary>价格配置 <span class="tag">每百万 token 单价 · 以 ¥ 计价 · 默认收起</span></summary>
-      <div class="price-tools">
-        <button id="fillDefaults">填入官方默认价</button>
-        <button id="clearPrices">清空</button>
-        <label>添加模型：<input type="text" id="addModel" placeholder="模型名（归一化后）" /></label>
-        <button id="addBtn">添加</button>
-      </div>
-      <div class="price-table-wrap">
-        <table id="priceTable">
-          <thead><tr>
-            <th>模型</th>
-            <th class="num">输入单价</th>
-            <th class="num">输出单价</th>
-            <th class="num">缓存命中</th>
-            <th class="num">缓存创建</th>
-            <th></th>
-          </tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="note">花费 = (输入×价 + 输出×价 + 缓存命中×价 + 缓存创建×价) / 1e6。数据里已带真实费用的模型优先显示「实」，无真实费用的按此单价「估」。</p>
-    </details>
-
-    <details class="cfg">
-      <summary>显示汇率 <span class="tag">1 外币 = N ¥，用于把金额换算成所选显示币种</span></summary>
-      <div id="ratesEditor" class="rates"></div>
-      <button id="saveRates" class="primary">保存汇率</button>
-    </details>
-
-    <details class="cfg">
-      <summary>模型别名映射 <span class="tag">把不同写法归一到同一模型（每行：原始名 = 归一名）</span></summary>
-      <textarea id="aliasEditor" rows="8" placeholder="deepseek-ai/DeepSeek-V4-Flash = deepseek-v4-flash&#10;muse-spark-1.2-contributor-free = muse-spark-free"></textarea>
-      <button id="saveAlias" class="primary">保存映射</button>
-      <p class="note">内置规则已自动去组织前缀（如 deepseek-ai/、nvidia/）并小写；此处可覆盖或补充。-free 等后缀默认保留（免费/收费分开计价）。</p>
-    </details>
-
-    <details class="cfg">
-      <summary>数据说明</summary>
-      <ul class="note-list">
-        <li>数据来源：~/.pi/agent/sessions 下的 *.jsonl（可用环境变量 PI_SESSIONS_DIR 覆盖）。</li>
-        <li>时间窗口对所有维度一致生效：窗口内没有用量的模型 / 工作区 / 会话不会出现。</li>
-        <li>「实」= 会话数据中 provider 记录的真实费用；「估」= 无记录时按上方单价推算（均为按量口径）。</li>
-        <li>消息数按会话在窗口内的 token 占比折算。</li>
-      </ul>
-    </details>
   </section>
 </main>
 
