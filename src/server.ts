@@ -250,8 +250,9 @@ const server = createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`pi-token-stats 已启动: http://localhost:${PORT}`);
-  console.log(`会话目录: ${process.env.PI_SESSIONS_DIR || '~/.pi/agent/sessions'}`);
+  console.log(`agent-token-stats 已启动: http://localhost:${PORT}`);
+  console.log(`pi 会话目录: ${process.env.PI_SESSIONS_DIR || '~/.pi/agent/sessions'}`);
+  console.log(`opencode 数据库: ${process.env.OPENCODE_DB || '~/.local/share/opencode/opencode.db'}`);
 });
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {

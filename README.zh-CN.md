@@ -37,14 +37,14 @@
 ### 面向 agent / 脚本（不开浏览器）
 
 ```bash
-./manager.command start            # 脱离进程组启动，等 /health 通过才返回
-./manager.command stop             # 三层兜底：PID 文件 → 进程匹配 → 端口占用
-./manager.command restart          # 改完后端代码用这个
-./manager.command status           # 退出码 0=运行中 3=未运行 4=进程在但 /health 不通
-./manager.command status --json    # 一行 JSON，便于脚本解析
+./manager.sh start            # 脱离进程组启动，等 /health 通过才返回
+./manager.sh stop             # 三层兜底：PID 文件 → 进程匹配 → 端口占用
+./manager.sh restart          # 改完后端代码用这个
+./manager.sh status           # 退出码 0=运行中 3=未运行 4=进程在但 /health 不通
+./manager.sh status --json    # 一行 JSON，便于脚本解析
 ```
 
-`start.command` / `stop.command` 只是 `manager.command` 的薄封装（多了 `--open`）。`manager.command` 在 macOS 上以 perl `fork+setsid` 兜底，调用方退出后服务仍在。
+`start.command` / `stop.command` 只是 `manager.sh` 的薄封装（`manager.command` 为兼容符号链接，多了 `--open`）。`manager.sh` 在 macOS 上以 perl `fork+setsid` 兜底，调用方退出后服务仍在。
 
 ### npm 等价命令
 
@@ -136,7 +136,7 @@ public/
 test/          # node:test 单测 + fixtures
 prices.json    # 运行时配置（已 gitignore）
 .cache/        # 扫描结果磁盘缓存（自动生成，已 gitignore，PI_SCAN_CACHE 可覆盖）
-manager.command / start.command / stop.command
+manager.sh（+ manager.command 兼容链接）/ start.command / stop.command
 ```
 
 ## 性能
@@ -149,11 +149,11 @@ manager.command / start.command / stop.command
 
 ```bash
 npm run typecheck && npm test
-./manager.command restart
+./manager.sh restart
 ```
 
 - 扫描逻辑改动后用真实数据验证 `Σ(模型维度) == 总用量`，缺口必须为 `0`（见 `AGENTS.md`）。
-- 服务进程一律用 `./manager.command <start|stop|restart|status>`；禁止用 `start.command`（会弹浏览器）。
+- 服务进程一律用 `./manager.sh <start|stop|restart|status>`（`manager.command` 为兼容符号链接）；禁止用 `start.command`（会弹浏览器）。
 
 ## 许可证
 

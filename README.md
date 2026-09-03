@@ -37,14 +37,14 @@ Zero runtime dependencies (only devDependencies: `typescript` / `prettier`; open
 ### For agents / scripts (no browser popup)
 
 ```bash
-./manager.command start            # detached; returns only after /health is OK
-./manager.command stop             # 3-layer kill: PID file → process match → port holder
-./manager.command restart          # use after editing backend code
-./manager.command status           # exit code: 0=running  3=not running  4=alive but /health failed
-./manager.command status --json    # one-line JSON for parsing
+./manager.sh start            # detached; returns only after /health is OK
+./manager.sh stop             # 3-layer kill: PID file → process match → port holder
+./manager.sh restart          # use after editing backend code
+./manager.sh status           # exit code: 0=running  3=not running  4=alive but /health failed
+./manager.sh status --json    # one-line JSON for parsing
 ```
 
-`start.command` / `stop.command` are thin wrappers around `manager.command` with `--open`. `manager.command` double-forks (perl `fork+setsid` fallback on macOS) so the server survives the caller.
+`start.command` / `stop.command` are thin wrappers around `manager.sh` (`manager.command` is a compat symlink) with `--open`. `manager.sh` double-forks (perl `fork+setsid` fallback on macOS) so the server survives the caller.
 
 ### npm equivalents
 
@@ -137,7 +137,7 @@ public/
 test/          # node:test suites + fixtures
 prices.json    # runtime config (gitignored)
 .cache/        # scan disk cache (auto-generated, gitignored; override via PI_SCAN_CACHE)
-manager.command / start.command / stop.command
+manager.sh (+ manager.command symlink) / start.command / stop.command
 ```
 
 ## Performance
@@ -150,11 +150,11 @@ manager.command / start.command / stop.command
 
 ```bash
 npm run typecheck && npm test
-./manager.command restart
+./manager.sh restart
 ```
 
 - After changing scanning/aggregation logic, verify `Σ(model) == total` with real data — gap must be `0` (see `AGENTS.md`).
-- Service management: always use `./manager.command <start|stop|restart|status>` in scripts; `start.command` pops a browser.
+- Service management: always use `./manager.sh <start|stop|restart|status>` (`manager.command` is a compat symlink) in scripts; `start.command` pops a browser.
 
 ## License
 

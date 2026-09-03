@@ -1,9 +1,9 @@
 {
-  "name": "pi-token-stats",
-  "version": "0.2.0",
+  "name": "agent-token-stats",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "本地看板：统计 pi-coding-agent 的 token 消耗（按工作区 / 会话 / 天 / 模型 / 提供商）",
+  "description": "本地看板：统计 coding agent（pi / opencode）的 token 消耗（按数据源 / 工作区 / 会话 / 天 / 模型 / 提供商）",
   "engines": {
     "node": ">=22.6"
   },
