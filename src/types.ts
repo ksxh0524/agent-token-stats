@@ -12,11 +12,15 @@ export interface Usage {
   realCost: number;    // 数据内记录的真实费用合计（¥）
 }
 
+// 数据来源。pi = ~/.pi/agent/sessions 的 jsonl；opencode = opencode.db (SQLite)
+export type SourceKind = 'pi' | 'opencode';
+
 // 单个会话的聚合结果。所有维度都带 dayUsage / modelUsage，
 // 让前端可以在任意时间窗口内严格重算。
 export interface SessionAgg extends Usage {
   id: string;
-  cwd: string;                              // 工作区（session 事件的 cwd）
+  source: SourceKind;                       // 数据来源
+  cwd: string;                              // 工作区（pi: session 事件 cwd / opencode: session.directory）
   name: string;                             // 会话名（首条 user 消息摘要）
   startTs: string | null;
   endTs: string | null;
@@ -44,13 +48,21 @@ export interface PriceConfig {
   modelAliases: Record<string, string>;  // 模型名映射表：原始名 → 归一名
 }
 
+// 单个数据源的扫描概况（给前端 meta 行与来源筛选用）
+export interface SourceStat {
+  location: string;   // pi: 会话目录 / opencode: 数据库路径
+  enabled: boolean;   // 数据源是否存在/可读
+  sessions: number;   // 会话数
+  error?: string;     // 打开或读取失败的原因
+}
+
 // 磁盘扫描结果（不含配置）
 export interface ScanResult {
   generatedAt: string;
-  sessionsDir: string;
+  sources: Record<SourceKind, SourceStat>;
   sessions: SessionAgg[];
-  scannedFiles: number;
-  skippedLines: number;                  // 解析失败的行数（坏行统计）
+  scannedFiles: number;                  // pi 本轮实际解析的文件数
+  skippedLines: number;                  // 解析失败的行数（坏行统计，两数据源合计）
 }
 
 // /api/data 返回体 = 扫描结果 + 价格配置
