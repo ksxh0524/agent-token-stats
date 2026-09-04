@@ -19,3 +19,8 @@ export function saveConfig(cfg) {
     body: JSON.stringify(cfg),
   });
 }
+
+// 从 pi 配置 + models.dev 同步价格（后端合并规则：只填全 0 的模型，手填值不动）
+export function syncPrices() {
+  return fetchJSON('/api/prices/sync', { method: 'POST' });
+}

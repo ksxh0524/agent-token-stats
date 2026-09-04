@@ -21,6 +21,7 @@ Zero runtime dependencies (only devDependencies: `typescript` / `prettier`; SQLi
 - **Time window** — default **last 3 days** in `Asia/Shanghai` timezone; switch 7/30/90 days or pick a custom range. The window filters every dimension.
 - **Cost model** — per-million-token price stored in **¥**; display currency is converted via configurable rates. `actual` = provider-recorded `usage.cost.total`, `estimated` = price×tokens fallback. Cost is resolved at **model × day** granularity so all views stay consistent.
 - **Model normalization** — strips org prefix (`deepseek-ai/`, `nvidia/`), lowercases, colon→hyphen, with an editable alias map.
+- **Price sync** — one click in Settings: pi's user config (`~/.pi/agent/models.json` costs, override with `PI_MODELS_FILE`) takes priority, models.dev catalog fills the rest, converted to ¥; only fills models with all-zero prices and never touches manually-entered values.
 - **Incremental polling** — the dashboard polls every 30s with a data revision; when nothing changed the server replies with ~100 bytes (measured: 1.1MB full payload → 98 bytes) and the frontend skips re-rendering entirely. The session table renders in batches (first 150 rows, auto-append on scroll).
 
 ## Requirements

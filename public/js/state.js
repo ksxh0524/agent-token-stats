@@ -13,6 +13,7 @@ export const state = {
   auto: false,
   timer: null,
   currency: '¥', // 仅影响显示
+  modelView: 'flat', // 模型明细视图：flat = 仅模型 | provider = 按服务商分组
   sort: {
     ws: { key: 'totalTokens', dir: -1 },
     sess: { key: 'totalTokens', dir: -1 },
@@ -30,6 +31,7 @@ export function loadPrefs() {
     if (typeof p.workspace === 'string') state.workspace = p.workspace;
     if (p.currency) state.currency = p.currency;
     if (typeof p.auto === 'boolean') state.auto = p.auto;
+    if (p.modelView === 'flat' || p.modelView === 'provider') state.modelView = p.modelView;
     // 时间窗口不持久化：每次打开都按「今天」重算近 3 天
   } catch {
     /* 忽略坏数据 */
@@ -45,6 +47,7 @@ export function savePrefs() {
         workspace: state.workspace,
         currency: state.currency,
         auto: state.auto,
+        modelView: state.modelView,
       }),
     );
   } catch {

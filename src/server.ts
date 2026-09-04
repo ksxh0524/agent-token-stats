@@ -6,6 +6,7 @@
 //  - /api/data 结果 2s 内复用缓存，并发请求合并为一次扫描
 import { scan } from './scan.ts';
 import type { ApiData, ModelPrice, PriceConfig, ScanResult } from './types.ts';
+import { syncPrices } from './prices-sync.ts';
 import { readFile, writeFile, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,6 +90,7 @@ async function savePriceConfig(cfg: PriceConfig): Promise<void> {
   const st = await statSafe(PRICES_FILE);
   if (st) cfgCache = { mtimeMs: st.mtimeMs, size: st.size, cfg };
 }
+
 
 // ---------- /api/data 缓存与请求合并 ----------
 const DATA_FRESH_MS = 2000;
@@ -243,6 +245,18 @@ const server = createServer((req, res) => {
         }
         if (p === '/api/prices') {
           await handlePrices(req, res);
+          return;
+        }
+        if (p === '/api/prices/sync' && req.method === 'POST') {
+          if (!isLocalTrusted(req)) {
+            sendJson(res, 403, { ok: false, error: 'forbidden origin' });
+            return;
+          }
+          try {
+            sendJson(res, 200, { ok: true, ...(await syncPrices(await getPriceConfig(), savePriceConfig)) });
+          } catch (err) {
+            sendJson(res, 500, { ok: false, error: String((err as Error)?.message || err) });
+          }
           return;
         }
         sendJson(res, 404, { ok: false, error: 'not found' });

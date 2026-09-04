@@ -1,11 +1,12 @@
 // 入口：装配状态、数据加载、交互绑定与渲染循环。
 import { state, loadPrefs, savePrefs } from './state.js';
-import { getData, saveConfig } from './api.js';
-import { aggregate, enrichSession, sessionInWindow } from './aggregate.js';
+import { getData, saveConfig, syncPrices } from './api.js';
+import { aggregate, enrichSession, sessionInWindow, aggregateProviderModels } from './aggregate.js';
 import {
   renderCards,
   renderWorkspaceTable,
   renderModelTable,
+  renderProviderModelTable,
   renderSessionTable,
   appendSessionBatch,
   renderBars,
@@ -130,11 +131,23 @@ function renderAll() {
   renderBars($('#models'), viewAgg.models, 15, mf);
   renderBars($('#providers'), viewAgg.providers, 20, mf);
 
-  // 模型明细
+  // 模型明细：仅模型 / 按服务商 两个视图
   $('#modelTag').textContent =
     `${viewAgg.models.length} 个模型 · 窗口 ${win.from || '最早'} ~ ${win.to || '今天'}` +
     (state.workspace !== 'ALL' ? ` · 仅工作区 ${state.workspace}` : '');
-  renderModelTable($('#modelTable'), viewAgg.models, state.sort.model, viewAgg.totals.totalTokens, mf);
+  document.querySelectorAll('#modelViewSwitch button').forEach((b) =>
+    b.classList.toggle('active', b.dataset.mv === state.modelView),
+  );
+  if (state.modelView === 'provider') {
+    const groups = aggregateProviderModels({ sessions: base, prices: state.data.prices, win, aliases });
+    $('#modelTag').textContent = `${groups.length} 个服务商 · 窗口 ${win.from || '最早'} ~ ${win.to || '今天'}` +
+      (state.workspace !== 'ALL' ? ` · 仅工作区 ${state.workspace}` : '') + ' · 全会话口径';
+    document.querySelector('#modelTable th[data-k="key"]').textContent = '服务商 / 模型';
+    renderProviderModelTable($('#modelTable'), groups, mf);
+  } else {
+    document.querySelector('#modelTable th[data-k="key"]').textContent = '模型';
+    renderModelTable($('#modelTable'), viewAgg.models, state.sort.model, viewAgg.totals.totalTokens, mf);
+  }
   const rateNote =
     state.currency === '¥' ? '' : `；显示币种 ${state.currency} 按 1 ${state.currency} = ${state.data.rates?.[state.currency] ?? '?'} ¥ 换算`;
   $('#costNote').textContent =
@@ -398,6 +411,49 @@ function bind() {
   bindSort('#wsTable th[data-k]', 'ws');
   bindSort('#sessTable th[data-k]', 'sess');
   bindSort('#modelTable th[data-k]', 'model');
+
+  // 模型明细视图切换（仅模型 / 按服务商）
+  $('#modelViewSwitch').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mv]');
+    if (!b || state.modelView === b.dataset.mv) return;
+    state.modelView = b.dataset.mv;
+    savePrefs();
+    renderAll();
+  });
+
+  // 价格同步：pi 用户配置优先 + models.dev 官方价兜底
+  const syncBtn = $('#syncPrices');
+  syncBtn.addEventListener('click', async () => {
+    syncBtn.disabled = true;
+    syncBtn.textContent = '同步中…';
+    $('#syncNote').textContent = '';
+    try {
+      const r = await syncPrices();
+      const parts = [];
+      if (r.filled?.length)
+        parts.push(
+          `已填 ${r.filled.length} 个：` +
+            r.filled
+              .slice(0, 8)
+              .map((f) => `${f.model}←${f.source === 'pi' ? 'pi配置' : '官方'}`)
+              .join('、') +
+            (r.filled.length > 8 ? ` 等 ${r.filled.length} 个` : ''),
+        );
+      if (r.skipped?.length) parts.push(`保留手填 ${r.skipped.length} 个`);
+      if (!r.modelsDevOk) parts.push('⚠ models.dev 拉取失败，仅用 pi 配置');
+      if (!r.piConfigured) parts.push('⚠ 未读到 pi 配置（~/.pi/agent/models.json）');
+      $('#syncNote').textContent = parts.join(' · ') || '没有可同步的新价格';
+      if (r.filled?.length) {
+        settingsBuiltFor = '';
+        await load();
+      }
+    } catch (err) {
+      $('#syncNote').textContent = '同步失败：' + (err && err.message ? err.message : err);
+    } finally {
+      syncBtn.disabled = false;
+      syncBtn.textContent = '同步价格（pi + 官方目录）';
+    }
+  });
 
   // 价格编辑：失焦/回车提交（change 事件），避免每敲一键按半截数字计算
   $('#priceTable tbody').addEventListener('change', (e) => {

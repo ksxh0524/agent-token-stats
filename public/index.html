@@ -36,6 +36,8 @@
     <summary>价格配置 <span class="tag">每百万 token 单价 · 以 ¥ 计价 · 默认收起</span></summary>
     <div class="price-tools">
       <button id="fillDefaults">填入官方默认价</button>
+      <button id="syncPrices">同步价格（pi + 官方目录）</button>
+      <span id="syncNote" class="tag"></span>
       <button id="clearPrices">清空</button>
       <label>添加模型：<input type="text" id="addModel" placeholder="模型名（归一化后）" /></label>
       <button id="addBtn">添加</button>
@@ -117,7 +119,13 @@
       <div id="models"></div>
     </section>
     <section class="panel">
-      <h2>模型用量明细 <span class="tag" id="modelTag"></span></h2>
+      <h2>
+        模型用量明细 <span class="tag" id="modelTag"></span>
+        <span id="modelViewSwitch" class="view-switch" title="切换模型视图">
+          <button type="button" data-mv="flat">仅模型</button>
+          <button type="button" data-mv="provider">按服务商</button>
+        </span>
+      </h2>
       <div class="table-scroll">
         <table id="modelTable">
           <thead><tr>

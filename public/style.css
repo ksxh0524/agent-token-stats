@@ -57,6 +57,22 @@ button:hover { filter: brightness(0.97); }
 #srcTabs button:hover { color: var(--text); }
 #srcTabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
 
+/* 模型明细视图切换（h2 内的小按钮组） */
+.view-switch { display: inline-flex; gap: 0; margin-left: 10px; vertical-align: middle; }
+.view-switch button {
+  border: 1px solid var(--border); background: transparent; color: var(--muted);
+  padding: 2px 10px; font-size: 12px; cursor: pointer;
+}
+.view-switch button:first-child { border-radius: 6px 0 0 6px; }
+.view-switch button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.view-switch button.active { color: var(--accent); border-color: var(--accent); }
+.view-switch button:not(.active):hover { color: var(--text); }
+
+/* 按服务商分组视图：provider 合计行 + 旗下模型缩进行 */
+tr.prov-group td { font-weight: 600; background: var(--bg); border-top: 2px solid var(--border); }
+tr.prov-model td { color: var(--muted); }
+tr.prov-model td:first-child { padding-left: 26px; }
+
 /* 设置面板：顶部齿轮展开，铺在 header 下方 */
 #settingsPanel {
   background: var(--bg); border-bottom: 1px solid var(--border);

@@ -168,6 +168,50 @@ export function appendSessionBatch(el) {
   return sessRender.cursor < sessRender.rows.length;
 }
 
+/**
+ * 「按服务商分组看模型」表：provider 合计行（粗体）+ 旗下模型缩进行。
+ * 口径 = 窗口内活跃会话的全量数据（同「按提供商」视图）。
+ */
+export function renderProviderModelTable(tableEl, groups, mf) {
+  const tbody = tableEl.querySelector('tbody');
+  if (!groups.length) {
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">当前窗口内无模型用量</td></tr>';
+    const foot = tableEl.querySelector('tfoot');
+    if (foot) foot.innerHTML = '';
+    return;
+  }
+  const numCell = (v, extra = '') =>
+    `<td class="num"${extra ? ` title="${fmtFull(v)}"` : ''}>${fmt(v)}</td>`;
+  const costCell = (r) => {
+    const tag = r.realCost > 0 ? '<span class="badge-real">实</span>' : r.estCost > 0 ? '<span class="badge-est">估</span>' : '';
+    return `<td class="num">${r.realCost > 0 ? mf(r.realCost) : '-'}</td><td class="num">${mf(r.estCost)}</td><td class="num money">${mf(r.cost)}${tag}</td>`;
+  };
+  const parts = [];
+  for (const g of groups) {
+    parts.push(`
+      <tr class="prov-group">
+        <td class="path" title="${esc(g.key)}">▸ ${esc(g.key)}</td>
+        <td class="num">${g.sessions}</td>
+        ${numCell(g.input)} ${numCell(g.output)} ${numCell(g.cacheRead)} ${numCell(g.cacheWrite)} ${numCell(g.reasoning)} ${numCell(g.totalTokens)}
+        <td class="num">${g.pct.toFixed(1)}%</td>
+        ${costCell(g)}
+      </tr>`);
+    for (const m of g.models) {
+      parts.push(`
+      <tr class="prov-model">
+        <td class="path" title="${esc(m.raw)}">└ ${esc(m.key)}</td>
+        <td class="num">${m.sessions}</td>
+        ${numCell(m.input)} ${numCell(m.output)} ${numCell(m.cacheRead)} ${numCell(m.cacheWrite)} ${numCell(m.reasoning)} ${numCell(m.totalTokens)}
+        <td class="num">${m.pct.toFixed(1)}%</td>
+        ${costCell(m)}
+      </tr>`);
+    }
+  }
+  tbody.innerHTML = parts.join('');
+  const foot = tableEl.querySelector('tfoot');
+  if (foot) foot.innerHTML = '';
+}
+
 export function renderBars(el, items, limit, mf) {
   if (!items.length) {
     el.innerHTML = '<div class="empty">无数据</div>';

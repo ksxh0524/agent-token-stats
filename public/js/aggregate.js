@@ -212,3 +212,59 @@ export function enrichSession(s, prices, win) {
   const ratio = Math.min(1, wu.totalTokens / Math.max(1, s.totalTokens || 0));
   return { s, wu, hitRate: hr, cost, est, real, topModel, ratio };
 }
+
+/**
+ * 「按服务商分组看模型」聚合。
+ * 口径与「按提供商」视图一致：窗口内活跃会话的全量 providerModelUsage（该维度数据源未按天拆分）。
+ * 每个 provider 行 = 窗口内活跃会话对该 provider 的全量用量；models[] = 该 provider 下各原始模型的用量。
+ * @returns [{ key, sessions, messages, ...usage, estCost, cost, pct, models: [{key, sessions, ...usage, estCost, cost, pct}] }]
+ */
+export function aggregateProviderModels({ sessions, prices = {}, win = null, aliases = {} }) {
+  const groups = new Map(); // provider -> { row, models: Map }
+  let grandTotal = 0;
+
+  for (const s of sessions) {
+    if (!sessionInWindow(s, win)) continue;
+    for (const [p, rawModels] of Object.entries(s.providerModelUsage || {})) {
+      let g = groups.get(p);
+      if (!g) {
+        g = { key: p, sessions: 0, messages: 0, ...emptyAgg(), estCost: 0, cost: 0, models: new Map() };
+        groups.set(p, g);
+      }
+      g.sessions++;
+      g.messages += s.messages || 0;
+      const top = s.providerUsage?.[p];
+      if (top) addTo(g, top);
+      for (const [raw, u] of Object.entries(rawModels)) {
+        const m = normModel(raw, aliases);
+        const price = prices[m];
+        const e = estCost(u, price);
+        const useReal = u.realCost > 0;
+        g.estCost += useReal ? 0 : e;
+        g.cost += useReal ? u.realCost : e;
+        let mr = g.models.get(raw);
+        if (!mr) {
+          mr = { key: m, raw, sessions: 0, messages: 0, ...emptyAgg(), estCost: 0, cost: 0 };
+          g.models.set(raw, mr);
+        }
+        mr.sessions++;
+        mr.messages += s.messages || 0;
+        addTo(mr, u);
+        mr.estCost += useReal ? 0 : e;
+        mr.cost += useReal ? u.realCost : e;
+      }
+    }
+  }
+
+  const out = [...groups.values()];
+  for (const g of out) {
+    g.models = [...g.models.values()].sort((a, b) => b.totalTokens - a.totalTokens);
+    grandTotal += g.totalTokens;
+  }
+  out.sort((a, b) => b.totalTokens - a.totalTokens);
+  for (const g of out) {
+    g.pct = grandTotal > 0 ? (g.totalTokens / grandTotal) * 100 : 0;
+    for (const m of g.models) m.pct = grandTotal > 0 ? (m.totalTokens / grandTotal) * 100 : 0;
+  }
+  return out;
+}

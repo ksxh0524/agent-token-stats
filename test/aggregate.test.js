@@ -127,3 +127,45 @@ test('sessionInWindow / sessionWindowUsage', () => {
   assert.equal(sessionInWindow(s, { from: '2026-09-01', to: '' }), false);
   assert.equal(sessionWindowUsage(s, null).output, 7);
 });
+
+// ---------- aggregateProviderModels：按服务商分组看模型 ----------
+import { aggregateProviderModels } from '../public/js/aggregate.js';
+
+test('aggregateProviderModels：分组、窗口过滤、blended 费用与占比', () => {
+  const prices = { 'm-a': { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } };
+  const mk = (over = {}) => mkS({ providerUsage: {}, providerModelUsage: {}, ...over });
+  const sessions = [
+    mk({
+      providerModelUsage: {
+        'prov-A': { 'm-a': { input: 100, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 100, realCost: 0.5 } },
+        'prov-B': { 'm-b': { input: 50, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 50, realCost: 0 } },
+      },
+      providerUsage: {
+        'prov-A': { input: 100, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 100, realCost: 0.5 },
+        'prov-B': { input: 50, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 50, realCost: 0 },
+      },
+      dayUsage: { '2026-08-10': { input: 150, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 150, realCost: 0.5 } },
+    }),
+    mk({
+      id: 's2',
+      dayUsage: { '2020-01-01': { input: 999, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 999, realCost: 0 } },
+    }), // 窗口外，应被排除
+  ];
+  const win = { from: '2026-08-01', to: '2026-08-31' };
+  const groups = aggregateProviderModels({ sessions, prices, win, aliases: {} });
+
+  assert.equal(groups.length, 2);
+  const a = groups.find((g) => g.key === 'prov-A');
+  const b = groups.find((g) => g.key === 'prov-B');
+  assert.ok(a && b);
+  // prov-A：realCost>0 → 用真实值；prov-B：无 realCost → 按单价估（m-b 无单价 → est=0）
+  assert.ok(Math.abs(a.cost - 0.5) < 1e-9);
+  assert.ok(a.estCost === 0);
+  assert.equal(a.models.length, 1);
+  assert.equal(a.models[0].key, 'm-a');
+  assert.equal(b.models[0].key, 'm-b');
+  // 占比：prov-A 100 / 150
+  assert.ok(Math.abs(a.pct - (100 / 150) * 100) < 1e-6);
+  // 排序：prov-A(100) > prov-B(50)
+  assert.equal(groups[0].key, 'prov-A');
+});
