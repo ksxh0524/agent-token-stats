@@ -46,9 +46,17 @@ pidfile_pid() {
 # 客户端（浏览器、curl、编辑器）一起列出来，stop 会连它们一并 kill —— 实测过。
 # 无占用时输出空，调用方要自己吞返回码，否则 set -e 下脚本会静默退出。
 port_pids() { lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null || true; }
-# 命令行匹配（端口已释放但进程还没死的残留）。限定 node 进程，
-# 免得把命令行里恰好含这个路径的编辑器 / grep 之类的东西匹配进来。
-name_pids() { pgrep -f "node.*$DIR/src/server\.ts" 2>/dev/null || true; }
+# 命令行匹配（端口已释放但进程还没死的残留）。用 --experimental-strip-types
+# 这个本服务独有的参数当锚点，比只匹配路径更不容易误伤编辑器 / grep 之类。
+# [-] 是防模式以 - 开头被 pgrep 当成选项；NODE_BIN 换成 bun/deno 也能匹配上。
+name_pids() { pgrep -f "[-]-experimental-strip-types.*$DIR/src/server\.ts" 2>/dev/null || true; }
+# 缺了这些工具，健康检查会永远失败、端口兜底会永远为空，直接说清楚比让人干等强
+need_tool() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "❌ 缺少命令: $1（health 检查和端口查询都依赖它）"
+    return 1
+  fi
+}
 # $1 是不是 $2（空格分隔的 PID 串）里的一个
 pid_in() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 # 从一批 PID 里筛出还活着的；绝不返回非零，避免被 set -e 打断
@@ -288,8 +296,12 @@ while [ $# -gt 0 ]; do
     --open) OPEN=1 ;;
     --json) JSON=1 ;;
     --wait)
+      if [ $# -lt 2 ]; then
+        echo "❌ --wait 缺少数值参数（例: --wait 20）"
+        exit 2
+      fi
       shift
-      WAIT="${1:-10}"
+      WAIT="$1"
       case "$WAIT" in
         '' | *[!0-9]*)
           echo "❌ --wait 需要一个非负整数: $WAIT"
@@ -300,7 +312,12 @@ while [ $# -gt 0 ]; do
     -h | --help) usage; exit 0 ;;
     *) echo "❌ 未知参数: $1"; echo; usage; exit 2 ;;
   esac
-  shift
+  if [ $# -gt 0 ]; then shift; fi
+done
+
+# curl 做健康检查、lsof 查端口，缺一个后面的分支就全是假阴性
+for t in curl lsof; do
+  if ! need_tool "$t"; then exit 1; fi
 done
 
 case "$ACTION" in
