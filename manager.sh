@@ -96,13 +96,32 @@ node_ok() {
 
 # ---------- start ----------
 do_start() {
-  local pid=""
-  if pid="$(pidfile_pid)"; then
+  local pid="" pf="" np="" up=0
+  if health; then up=1; fi
+
+  # PID 文件不能盲信：进程死后 PID 会被系统分给别的进程，
+  # 那样 start 会以为服务还在跑直接跳过，结果根本没起来。
+  pf="$(pidfile_pid || true)"
+  if [ -n "$pf" ]; then
+    if [ "$up" -eq 1 ]; then
+      pid="$pf" # 端口上确实是本服务，pidfile 可信
+    else
+      np="$(name_pids)"
+      if pid_in "$pf" "$np"; then
+        pid="$pf" # 命令行对得上，是本服务，只是 health 没通
+      else
+        echo "⚠️  PID 文件里的 $pf 不是本服务进程（PID 已被复用），已清理"
+        rm -f "$PIDFILE"
+      fi
+    fi
+  fi
+
+  if [ -n "$pid" ]; then
     echo "ℹ️  服务已在运行 (PID $pid)，跳过启动"
     open_if_wanted
     return 0
   fi
-  if health; then
+  if [ "$up" -eq 1 ]; then
     echo "ℹ️  端口 $PORT 已有服务在运行，未重复启动（如需重启用 restart）"
     # PID 文件丢了（上次被强杀 / 手动删过）就顺手补回来，
     # 否则下次 stop 只能靠端口和进程名兜底。
