@@ -255,9 +255,17 @@ server.listen(PORT, () => {
   console.log(`opencode 数据库: ${process.env.OPENCODE_DB || '~/.local/share/opencode/opencode.db'}`);
 });
 
+// 收到终止信号：先掐掉所有 keep-alive 连接，否则 server.close() 的回调
+// 永远不会触发，进程会被 SIGTERM 卡成不死不活的残留（stop 之后看着像没停掉）。
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
+    const bail = setTimeout(() => process.exit(0), 800);
+    bail.unref();
+    try {
+      server.closeAllConnections?.();
+    } catch {
+      /* 版本不支持就算了，下面还有兜底 */
+    }
     server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 1500).unref();
   });
 }

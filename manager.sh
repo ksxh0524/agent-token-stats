@@ -42,24 +42,81 @@ pidfile_pid() {
   kill -0 "$pid" 2>/dev/null || return 1
   echo "$pid"
 }
-# 占用端口的进程（PID 文件失效时的兜底）
-port_pid() { lsof -ti tcp:"$PORT" 2>/dev/null | head -1; }
+# 端口上的【监听者】。必须带 -sTCP:LISTEN：不带时 lsof 会把连到这个端口的
+# 客户端（浏览器、curl、编辑器）一起列出来，stop 会连它们一并 kill —— 实测过。
+# 无占用时输出空，调用方要自己吞返回码，否则 set -e 下脚本会静默退出。
+port_pids() { lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null || true; }
+# 命令行匹配（端口已释放但进程还没死的残留）。限定 node 进程，
+# 免得把命令行里恰好含这个路径的编辑器 / grep 之类的东西匹配进来。
+name_pids() { pgrep -f "node.*$DIR/src/server\.ts" 2>/dev/null || true; }
+# $1 是不是 $2（空格分隔的 PID 串）里的一个
+pid_in() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+# 从一批 PID 里筛出还活着的；绝不返回非零，避免被 set -e 打断
+alive_of() {
+  local p out=""
+  for p in $1; do
+    [ "$p" = "$$" ] && continue
+    if kill -0 "$p" 2>/dev/null; then out="$out $p"; fi
+  done
+  printf '%s' "${out# }"
+}
+# 一批 PID 去重合并成一个空格串
+uniq_pids() { printf '%s\n' $1 | sed '/^$/d' | sort -un | tr '\n' ' '; }
+# --open 时打开浏览器。单独成函数：写成 `[ "$OPEN" -eq 1 ] && ...` 在
+# set -e 下条件不成立会让整个脚本静默退出（本脚本踩过的坑）。
+open_if_wanted() {
+  if [ "$OPEN" -eq 1 ]; then
+    open "$BASE"
+    echo "   已打开 $BASE"
+  fi
+}
+# node 版本够不够跑 --experimental-strip-types（>= 22.6）。
+# 不提前拦的话，版本低只会表现为启动超时，白等 10 秒才知道失败。
+node_ok() {
+  local v major minor
+  v="$("$NODE_BIN" -v 2>/dev/null || true)"
+  v="${v#v}"
+  [ -n "$v" ] || return 1
+  major="${v%%.*}"
+  minor="${v#*.}"; minor="${minor%%.*}"
+  case "$major" in '' | *[!0-9]*) return 1 ;; esac
+  case "$minor" in '' | *[!0-9]*) return 1 ;; esac
+  if [ "$major" -gt 22 ]; then return 0; fi
+  if [ "$major" -eq 22 ] && [ "$minor" -ge 6 ]; then return 0; fi
+  return 1
+}
 
 # ---------- start ----------
 do_start() {
-  local pid
+  local pid=""
   if pid="$(pidfile_pid)"; then
     echo "ℹ️  服务已在运行 (PID $pid)，跳过启动"
-    [ "$OPEN" -eq 1 ] && { open "$BASE"; echo "   已打开 $BASE"; }
+    open_if_wanted
     return 0
   fi
   if health; then
     echo "ℹ️  端口 $PORT 已有服务在运行，未重复启动（如需重启用 restart）"
-    [ "$OPEN" -eq 1 ] && { open "$BASE"; echo "   已打开 $BASE"; }
+    # PID 文件丢了（上次被强杀 / 手动删过）就顺手补回来，
+    # 否则下次 stop 只能靠端口和进程名兜底。
+    pid="$(port_pids | head -1)"
+    if [ -n "$pid" ]; then echo "$pid" > "$PIDFILE"; fi
+    open_if_wanted
     return 0
   fi
   if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
     echo "❌ 未找到 node: $NODE_BIN（需要 >= 22.6；可用 NODE_BIN=/path/to/node 指定）"
+    return 1
+  fi
+  if ! node_ok; then
+    echo "❌ node 版本过低: $("$NODE_BIN" -v 2>/dev/null || echo 未知)（$NODE_BIN）"
+    echo "   本项目需要 >= 22.6 才能用 --experimental-strip-types；可用 NODE_BIN=/path/to/node 指定"
+    return 1
+  fi
+  # 端口被别的进程占着（health 又不通）→ 启动必然 EADDRINUSE，别让用户干等超时
+  local blocker; blocker="$(uniq_pids "$(port_pids)")"
+  if [ -n "$blocker" ]; then
+    echo "❌ 端口 $PORT 已被其他进程占用: $blocker"
+    echo "   换端口启动: PORT=32100 $0 start"
     return 1
   fi
 
@@ -78,16 +135,22 @@ do_start() {
     disown 2>/dev/null || true
   fi
 
-  local i=0 pid
+  local i=0
   while [ "$i" -lt "$WAIT" ]; do
     sleep 1
     i=$((i + 1))
     if health; then
-      # pid 从端口反查：脱离进程组后 $! 拿到的是中间进程，不可靠
-      pid="$(port_pid)"
-      [ -n "$pid" ] && echo "$pid" > "$PIDFILE"
+      # pid 从端口反查：脱离进程组后 $! 拿到的是中间进程，不可靠。
+      # /health 通了但 lsof 可能还没看到监听，多试几次再放弃写 PID 文件。
+      local j=0
+      while [ "$j" -lt 5 ] && [ -z "$pid" ]; do
+        pid="$(port_pids | head -1)"
+        [ -n "$pid" ] || sleep 0.2
+        j=$((j + 1))
+      done
+      if [ -n "$pid" ]; then echo "$pid" > "$PIDFILE"; fi
       echo "✅ 已启动 (PID ${pid:-未知})  端口 $PORT"
-      [ "$OPEN" -eq 1 ] && { open "$BASE"; echo "   已打开 $BASE"; }
+      open_if_wanted
       return 0
     fi
   done
@@ -98,53 +161,91 @@ do_start() {
 
 # ---------- stop ----------
 do_stop() {
-  local stopped=0 pid pp
-  if pid="$(pidfile_pid)"; then
-    if kill "$pid" 2>/dev/null; then
-      echo "🛑 已停止 (PID $pid)"
-      stopped=1
+  # 只杀「确认是本服务」的进程。三条线索：命令行 / 端口监听 / PID 文件。
+  # 端口监听者必须 /health 通过（说明端口上确实是本服务）才并入名单，
+  # 否则端口上可能是别的服务，不能替用户做主把它杀掉。
+  local p pids="" pf blocker="" np="" hp=""
+  np="$(name_pids)"
+  for p in $np; do pids="$pids $p"; done
+
+  if health; then
+    hp="$(port_pids)"
+    for p in $hp; do pids="$pids $p"; done
+  else
+    # health 不通：端口上的东西不是本服务，只记下来报告，不碰
+    blocker="$(uniq_pids "$(port_pids)")"
+  fi
+
+  pf="$(pidfile_pid || true)"
+  if [ -n "$pf" ]; then
+    # PID 文件不可全信：进程退出后 PID 可能被系统分给别的进程。
+    # 只有「命令行匹配」或「本服务还在应答」时才认为它真是我们的服务。
+    if pid_in "$pf" "$np" || [ -n "$hp" ]; then
+      pids="$pids $pf"
+    else
+      echo "⚠️  PID 文件里的 $pf 不是本服务进程（PID 可能已被复用），跳过不杀"
     fi
+  fi
+  pids="$(uniq_pids "$pids")"
+
+  if [ -n "$pids" ]; then
+    echo "⏹  正在停止: $pids"
+    for p in $pids; do kill -TERM "$p" 2>/dev/null || true; done
+  elif [ -n "$blocker" ]; then
+    echo "ℹ️  本服务没在跑；端口 $PORT 被其他进程占用: $blocker（未动它）"
+  else
+    echo "ℹ️  没有运行中的服务器（端口 $PORT 空闲）"
   fi
   rm -f "$PIDFILE"
 
-  if [ "$stopped" -eq 0 ] && pkill -f "$DIR/src/server.ts" 2>/dev/null; then
-    echo "🛑 已停止残留进程（进程名匹配）"
-    stopped=1
-  fi
-
-  if [ "$stopped" -eq 0 ]; then
-    pp="$(port_pid)"
-    if [ -n "$pp" ] && kill $pp 2>/dev/null; then
-      echo "🛑 已停止占用端口 $PORT 的进程 (PID $pp)"
-      stopped=1
-    fi
-  fi
-
-  # 等端口真正释放，restart 才不会撞上
-  local i=0
+  # 最多等 5s 让它优雅退出，每 0.25s 查一次
+  local i=0 alive
   while [ "$i" -lt 20 ]; do
-    [ -z "$(port_pid)" ] && break
-    sleep 0.5
+    alive="$(alive_of "$pids")"
+    if [ -z "$alive" ]; then break; fi
+    sleep 0.25
     i=$((i + 1))
   done
 
-  if [ "$stopped" -eq 0 ]; then
-    echo "ℹ️  没有运行中的服务器"
+  # 还赖着不走的强杀 —— 这是「点完 stop 进程还卡着」的根因兜底
+  alive="$(alive_of "$pids")"
+  if [ -n "$alive" ]; then
+    echo "⚠️  以下进程未响应 SIGTERM，强制结束: $alive"
+    for p in $alive; do kill -KILL "$p" 2>/dev/null || true; done
+    sleep 0.4
   fi
+
+  # 端口兜底：只有确认刚才停的是本服务时才敢对端口占用者下手，
+  # 从头到尾 health 就不通的情况（端口上是别人的服务）一个都不碰。
+  local left; left="$(uniq_pids "$(port_pids)")"
+  if [ -n "$left" ] && { [ -n "$np" ] || [ -n "$hp" ]; }; then
+    echo "⚠️  端口 $PORT 仍被占用，强制结束: $left"
+    for p in $left; do kill -KILL "$p" 2>/dev/null || true; done
+    sleep 0.4
+  fi
+
+  # blocker 场景上面已经报过了，这里不再重复
+  left="$(uniq_pids "$(port_pids)")"
+  if [ -n "$left" ] && [ -z "$blocker" ]; then
+    echo "❌ 仍有进程占用端口 $PORT: $left（强制结束也没成功）"
+    return 1
+  fi
+  if [ -n "$pids" ]; then echo "✅ 已停止，端口 $PORT 已释放"; fi
   return 0
 }
 
 # ---------- status ----------
 do_status() {
   local state=stopped pid="" uptime=""
-  pid="$(pidfile_pid)" || pid="$(port_pid)"
+  pid="$(pidfile_pid || true)"
+  if [ -z "$pid" ]; then pid="$(port_pids | head -1)"; fi
   if [ -n "$pid" ]; then
     if health; then
       state=running
       local body
       body="$(curl -sf --max-time 2 "$BASE/health" 2>/dev/null)" || body=""
       uptime="$(printf '%s' "$body" | grep -o '"uptime":[0-9.]*' | head -1 | cut -d: -f2)"
-      [ -n "$uptime" ] && uptime="$(printf '%.0f' "$uptime")"
+      if [ -n "$uptime" ]; then uptime="$(printf '%.0f' "$uptime")"; fi
     else
       state=unhealthy
     fi
@@ -186,7 +287,16 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --open) OPEN=1 ;;
     --json) JSON=1 ;;
-    --wait) shift; WAIT="${1:-10}" ;;
+    --wait)
+      shift
+      WAIT="${1:-10}"
+      case "$WAIT" in
+        '' | *[!0-9]*)
+          echo "❌ --wait 需要一个非负整数: $WAIT"
+          exit 2
+          ;;
+      esac
+      ;;
     -h | --help) usage; exit 0 ;;
     *) echo "❌ 未知参数: $1"; echo; usage; exit 2 ;;
   esac
