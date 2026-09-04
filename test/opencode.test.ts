@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanOpencodeSessions } from '../src/opencode.ts';
+import { opencodeAdapter } from '../src/sources/opencode.ts';
+import { ScanStore } from '../src/store.ts';
 
 // 构造最小可用的 opencode 数据库（只含本扫描器关心的列）
 function makeFixtureDb(fp: string): void {
@@ -58,10 +59,15 @@ const dbPath = join(dir, 'opencode.db');
 makeFixtureDb(dbPath);
 process.env.OPENCODE_DB = dbPath;
 
-test.after?.(() => rmSync(dir, { recursive: true, force: true }));
+const store = new ScanStore(join(dir, 'store.db'));
+
+test.after?.(() => {
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 test('opencode：聚合、按天、模型/提供商维度、source 标记', async () => {
-  const r = await scanOpencodeSessions({ 'deepseek-ai/DeepSeek-V4-Flash': 'deepseek-v4-flash' });
+  const r = await opencodeAdapter.scan(store, { 'deepseek-ai/DeepSeek-V4-Flash': 'deepseek-v4-flash' });
 
   assert.equal(r.stat.enabled, true);
   assert.equal(r.sessions.length, 2); // 无 token 消息的会话也保留
@@ -95,17 +101,36 @@ test('opencode：聚合、按天、模型/提供商维度、source 标记', asyn
   assert.ok(a.startTs && a.startTs.startsWith('2026-08-20T02:00')); // 10:00 +08 = 02:00Z
 });
 
-test('opencode：空会话保留为 0 用量、库不存在时禁用', async () => {
-  const r = await scanOpencodeSessions();
+test('opencode：空会话保留为 0 用量、签名未变时零扫描', async () => {
+  // 第一轮已把 fixture 库的签名记下：签名不变 → 不碰源库，直接出库里的数据
+  // 注意别名哈希参与签名，必须与上一轮完全一致才算"没变"
+  const r = await opencodeAdapter.scan(store, { 'deepseek-ai/DeepSeek-V4-Flash': 'deepseek-v4-flash' });
   const b = r.sessions.find((s) => s.id === 'ses_bbb222')!;
   assert.ok(b);
   assert.equal(b.totalTokens, 0);
   assert.deepEqual(b.dayUsage, {});
+  assert.equal(r.scannedUnits, 0); // 增量命中，本轮没有读源库
 });
 
-test('opencode：库路径不存在时 enabled=false 且不抛错', async () => {
+test('opencode：源库删除会话后，本地归档保留（核心承诺）', async () => {
+  // 模拟 opencode 侧删掉一个会话
+  const db = new DatabaseSync(dbPath);
+  db.prepare('DELETE FROM session WHERE id = ?').run('ses_bbb222');
+  db.close();
+  utimesSync(dbPath, new Date(), new Date()); // 碰 mtime 确保签名变化
+
+  const r = await opencodeAdapter.scan(store, {});
+  assert.equal(r.stat.enabled, true);
+  // 源里只剩 1 个会话，但库里归档的 ses_bbb222 依然要返回 —— 历史不随源删除
+  assert.equal(r.sessions.length, 2);
+  assert.ok(r.sessions.find((s) => s.id === 'ses_bbb222'), '被删会话应作为归档保留');
+  assert.ok(r.sessions.find((s) => s.id === 'ses_aaa111'));
+});
+
+test('opencode：库路径不存在时 enabled=false 且归档数据仍返回', async () => {
   process.env.OPENCODE_DB = join(dir, 'missing.db');
-  const r = await scanOpencodeSessions();
+  const r = await opencodeAdapter.scan(store);
   assert.equal(r.stat.enabled, false);
-  assert.equal(r.sessions.length, 0);
+  // 库没了 ≠ 历史没了：前几轮入库的会话照常展示
+  assert.equal(r.sessions.length, 2);
 });

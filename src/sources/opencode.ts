@@ -1,21 +1,29 @@
-// 扫描 opencode 的 SQLite 数据库（默认 ~/.local/share/opencode/opencode.db），只读。
+// opencode 数据源适配器：扫描 opencode 的 SQLite 数据库（默认
+// ~/.local/share/opencode/opencode.db），只读。
+//
 // 数据模型：
 //  - session 表：id / directory(工作区) / title(会话名) / time_created(ms)
-//  - message 表：data(JSON)。assistant 消息带 tokens{input,output,reasoning,cache.read,cache.write,total}、
-//    cost(provider 记录的真实费用)、modelID / providerID、time.created(ms)
-// 性能：
-//  - 库级增量缓存（db + wal 的 mtime:size 签名），没变直接复用整份结果
-//  - 字段全部在 SQL 里用 json_extract 抽好，JS 侧只做累加
+//  - message 表：data(JSON)。assistant 消息带 tokens{...}、cost、modelID / providerID
+//
+// 增量策略（db 签名）：opencode.db 只有 3MB 级别，重算本身不慢，所以游标就是
+// db(-wal) 的 mtime:size 签名 —— 签名没变就完全不碰源库；变了才重新执行 SQL。
+//
+// 归档承诺：opencode 侧删除 session（甚至整库清空重装、换库路径）后，
+// 这里已入库的聚合行原样保留并打上 archived 标记，看板历史不丢。
 import { DatabaseSync } from 'node:sqlite';
-import type { SessionAgg, SourceStat, Usage } from './types.ts';
+import type { SessionAgg, SourceAdapter, SourceScanOutcome, SourceStat, Usage } from '../types.ts';
+import type { ScanStore, UnitRow } from '../store.ts';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { addUsage, aliasHash, emptyUsage, normalizeModelName, num, shanghaiDate, str, type RawUsage } from './util.ts';
+import { addUsage, aliasHash, emptyUsage, normalizeModelName, num, shanghaiDate, str, type RawUsage } from '../util.ts';
 
 export function resolveOpencodeDb(): string {
   return process.env.OPENCODE_DB || join(homedir(), '.local', 'share', 'opencode', 'opencode.db');
 }
+
+// 解析口径版本：SQL / 字段解释逻辑变更时 +1
+const OPENCODE_PARSER_VERSION = 1;
 
 const MSG_SQL = `
 SELECT m.session_id            AS sid,
@@ -62,12 +70,6 @@ function rowToRawUsage(r: MsgRow): RawUsage {
   };
 }
 
-export interface OpencodeScan {
-  sessions: SessionAgg[];
-  skippedLines: number;
-  stat: SourceStat;
-}
-
 async function dbSig(fp: string): Promise<string | null> {
   try {
     const [main, wal] = await Promise.all([stat(fp), stat(`${fp}-wal`).catch(() => null)]);
@@ -87,7 +89,7 @@ function openDb(fp: string): DatabaseSync {
   }
 }
 
-function buildSessions(db: DatabaseSync, aliases: Record<string, string>): { sessions: SessionAgg[]; skipped: number } {
+function buildSessions(db: DatabaseSync, aliases: Record<string, string>): Map<string, SessionAgg> {
   const meta = new Map<string, { directory: string; title: string }>();
   for (const s of db.prepare(SESSION_SQL).all() as Record<string, unknown>[]) {
     const id = str(s.id);
@@ -115,21 +117,20 @@ function buildSessions(db: DatabaseSync, aliases: Record<string, string>): { ses
     if (!sid || (!u.input && !u.output && !u.cacheRead && !u.cacheWrite && !u.totalTokens)) continue;
 
     let a = acc.get(sid);
-    if (!a)
-      acc.set(
-        sid,
-        (a = {
-          usage: emptyUsage(),
-          dayUsage: {},
-          modelUsage: {},
-          modelDayUsage: {},
-          providerUsage: {},
-          providerModelUsage: {},
-          startMs: Number.MAX_SAFE_INTEGER,
-          endMs: 0,
-          messages: 0,
-        }),
-      );
+    if (!a) {
+      a = {
+        usage: emptyUsage(),
+        dayUsage: {},
+        modelUsage: {},
+        modelDayUsage: {},
+        providerUsage: {},
+        providerModelUsage: {},
+        startMs: Number.MAX_SAFE_INTEGER,
+        endMs: 0,
+        messages: 0,
+      };
+      acc.set(sid, a);
+    }
 
     addUsage(a.usage, u);
     a.messages++;
@@ -165,10 +166,10 @@ function buildSessions(db: DatabaseSync, aliases: Record<string, string>): { ses
       });
   }
 
-  const sessions: SessionAgg[] = [];
+  const sessions = new Map<string, SessionAgg>();
   for (const [sid, a] of acc) {
     const info = meta.get(sid);
-    sessions.push({
+    sessions.set(sid, {
       id: sid,
       source: 'opencode',
       cwd: info?.directory || '(unknown)',
@@ -184,43 +185,112 @@ function buildSessions(db: DatabaseSync, aliases: Record<string, string>): { ses
       providerModelUsage: a.providerModelUsage,
     });
   }
-  return { sessions, skipped: 0 };
+  return sessions;
 }
 
-// 库级缓存：签名（mtime+size，含 -wal）没变则整份复用
-let cache: { key: string; res: OpencodeScan } | null = null;
+// 每个 opencode 会话 = 一个 unit（unit = `<db路径>#<sid>`，ctx 里存 db 签名）
+const unitKey = (dbPath: string, sid: string) => `${dbPath}#${sid}`;
 
-export async function scanOpencodeSessions(aliases: Record<string, string> = {}): Promise<OpencodeScan> {
-  const dbPath = resolveOpencodeDb();
-  const sig = await dbSig(dbPath);
-  // 库签名 + 别名哈希共同构成缓存键（别名影响模型归一键名）
-  const key = sig ? `${sig}|${aliasHash(aliases)}` : null;
-  if (key && cache && cache.key === key) return cache.res;
+function sortSessions(list: SessionAgg[]): SessionAgg[] {
+  return list.sort((a, b) => (b.startTs || '').localeCompare(a.startTs || ''));
+}
 
-  let res: OpencodeScan;
-  if (!sig) {
-    res = { sessions: [], skippedLines: 0, stat: { location: dbPath, enabled: false, sessions: 0 } };
-  } else {
+export const opencodeAdapter: SourceAdapter = {
+  kind: 'opencode',
+
+  async scan(store: ScanStore, aliases: Record<string, string> = {}): Promise<SourceScanOutcome> {
+    const dbPath = resolveOpencodeDb();
+    const ah = aliasHash(aliases);
+    const pv = OPENCODE_PARSER_VERSION;
+
+    const all = store.getUnits('opencode');
+    const current = new Map<string, UnitRow>();
+    const foreign: UnitRow[] = []; // 更早的库路径留下的归档行，永远保留展示
+    for (const row of all.values()) {
+      if (row.unit.startsWith(`${dbPath}#`)) current.set(row.sid, row);
+      else foreign.push(row);
+    }
+
+    const sig = await dbSig(dbPath);
+
+    // 快路径：签名 + 口径 + 别名都没变，源库一个字节都不碰
+    const probe = [...current.values()][0];
+    if (sig && probe && probe.ctx === sig && probe.pv === pv && probe.ah === ah) {
+      const sessions = sortSessions([...current.values(), ...foreign].map((r) => ({ ...r.agg })));
+      return {
+        sessions,
+        scannedUnits: 0,
+        skippedLines: 0,
+        stat: { location: dbPath, enabled: true, sessions: sessions.length },
+      };
+    }
+
+    let scanned = 0;
+    let statRes: SourceStat;
+
+    if (!sig) {
+      // 源库不存在：归档照常输出，enabled=false
+      const sessions = sortSessions([...current.values(), ...foreign].map((r) => ({ ...r.agg, archived: true })));
+      return {
+        sessions,
+        scannedUnits: 0,
+        skippedLines: 0,
+        stat: {
+          location: dbPath,
+          enabled: false,
+          sessions: sessions.length,
+          ...(sessions.length ? { error: '源数据库当前不存在，展示的是历史归档' } : {}),
+        },
+      };
+    }
+
     try {
       const db = openDb(dbPath);
       try {
         const built = buildSessions(db, aliases);
-        res = {
-          sessions: built.sessions.sort((x, y) => (y.startTs || '').localeCompare(x.startTs || '')),
-          skippedLines: built.skipped,
-          stat: { location: dbPath, enabled: true, sessions: built.sessions.length },
-        };
+        scanned = 1;
+
+        const rows: UnitRow[] = [];
+        // 本轮见过的会话 → upsert（覆盖最新聚合）；没见过的 → 标记归档保留
+        for (const [sid, agg] of built) {
+          rows.push({
+            source: 'opencode',
+            unit: unitKey(dbPath, sid),
+            size: 0,
+            mtime: 0,
+            inode: '',
+            offset: 0,
+            pv,
+            ah,
+            ctx: sig,
+            sid,
+            agg: { ...agg, archived: false },
+          });
+        }
+        for (const [sid, row] of current) {
+          if (!built.has(sid)) rows.push({ ...row, agg: { ...row.agg, archived: true }, ctx: sig, pv, ah });
+        }
+        store.putUnits(rows);
+        statRes = { location: dbPath, enabled: true, sessions: built.size };
       } finally {
         db.close();
       }
     } catch (err) {
-      res = {
-        sessions: [],
-        skippedLines: 0,
-        stat: { location: dbPath, enabled: false, sessions: 0, error: String((err as Error)?.message || err) },
+      statRes = {
+        location: dbPath,
+        enabled: false,
+        sessions: store.countSessions('opencode'),
+        error: String((err as Error)?.message || err),
       };
     }
-  }
-  if (key) cache = { key, res };
-  return res;
-}
+
+    const after = store.getUnits('opencode');
+    const sessions = sortSessions([...after.values()].map((r) => ({ ...r.agg })));
+    return {
+      sessions,
+      scannedUnits: scanned,
+      skippedLines: 0,
+      stat: statRes,
+    };
+  },
+};

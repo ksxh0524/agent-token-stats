@@ -1,6 +1,18 @@
 // scan / opencode 两个数据源共用的纯工具函数。
 import type { Usage } from './types.ts';
 
+/** Usage → Usage 的累加（与 addUsage 不同：入参已是规整的 Usage，realCost 直接取字段）。
+ *  增量扫描把一段新聚合并进累计聚合时必须用它；错用 addUsage 会把 realCost 全部丢成 0。 */
+export function mergeUsage(acc: Usage, u: Usage): void {
+  acc.input += u.input;
+  acc.output += u.output;
+  acc.cacheRead += u.cacheRead;
+  acc.cacheWrite += u.cacheWrite;
+  acc.reasoning += u.reasoning;
+  acc.totalTokens += u.totalTokens;
+  acc.realCost += u.realCost;
+}
+
 // cost 有两种形状：assistant 消息里是 { total }，subagent 结果里是裸数字
 export type RawCost = { total?: number } | number | null;
 export type RawUsage = Partial<Omit<Usage, 'realCost'>> & { cost?: RawCost };

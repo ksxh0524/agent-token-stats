@@ -12,8 +12,30 @@ export interface Usage {
   realCost: number;    // 数据内记录的真实费用合计（¥）
 }
 
-// 数据来源。pi = ~/.pi/agent/sessions 的 jsonl；opencode = opencode.db (SQLite)
-export type SourceKind = 'pi' | 'opencode';
+// 数据来源。pi = ~/.pi/agent/sessions 的 jsonl；opencode = opencode.db (SQLite)。
+// 接入新数据源（codex / claude code / ...）时在此扩展联合类型，并实现一个 SourceAdapter。
+export type SourceKind = 'pi' | 'opencode' | (string & {});
+
+import type { ScanStore } from './store.ts';
+
+// 单个数据源一轮扫描的产出。sessions 必须是「本源全部会话」，
+// 包括源数据已删除、仅存于本地库的归档会话 —— 归档是本项目的核心承诺。
+export interface SourceScanOutcome {
+  sessions: SessionAgg[];
+  scannedUnits: number; // 本轮真正全量重解析的扫描单位数（增量命中的不算）
+  skippedLines: number; // 坏行 / 跳过统计
+  stat: SourceStat;
+}
+
+// 数据源适配器。scan 的职责：
+//  1. 读取源数据（增量优先，用 store 里的游标判断从哪继续）
+//  2. 把有变化的会话聚合 upsert 进 store（永不 delete，除非口径作废）
+//  3. 返回本源全部会话（store 里的 = 当前源里的 + 已归档的）
+// 接入新数据源 = 写一个实现 + 在 scan.ts 的 ADAPTERS 里注册一行。
+export interface SourceAdapter {
+  kind: SourceKind;
+  scan(store: ScanStore, aliases: Record<string, string>): Promise<SourceScanOutcome>;
+}
 
 // 单个会话的聚合结果。所有维度都带 dayUsage / modelUsage，
 // 让前端可以在任意时间窗口内严格重算。
@@ -25,6 +47,7 @@ export interface SessionAgg extends Usage {
   startTs: string | null;
   endTs: string | null;
   messages: number;                         // assistant 消息数
+  archived?: boolean;                       // 源数据已删除，此聚合仅存于本地库（归档）
   dayUsage: Record<string, Usage>;          // 按天（Asia/Shanghai）拆分
   modelUsage: Record<string, Usage>;        // 按归一化模型名拆分（全会话）
   modelDayUsage: Record<string, Record<string, Usage>>; // 模型 × 天，用于窗口内精确算花费

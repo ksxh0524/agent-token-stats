@@ -5,9 +5,9 @@ import { normalizeModelName, scan } from '../src/scan.ts';
 process.env.PI_SESSIONS_DIR = new URL('./fixtures', import.meta.url).pathname;
 // 隔离 opencode 数据源：指向不存在的库，保证本测试只验证 pi 扫描
 process.env.OPENCODE_DB = '/tmp/nonexistent-opencode-for-scan-test.db';
-// 隔离磁盘缓存：每次运行用独立路径。否则①本轮会把生产缓存里没扫到的条目 prune 掉，
-// ②上一轮的结果被命中后 skippedLines / scannedFiles 不会重算，断言会飘。
-process.env.PI_SCAN_CACHE = `/tmp/agent-token-stats-test-cache-${process.pid}-${Date.now()}.json`;
+// 扫描库每次运行用独立路径：库里的会话是「只增不减」的归档数据，
+// 复用旧库会让上一轮的结果混进来，断言会飘。
+process.env.PI_SCAN_DB = `/tmp/agent-token-stats-test-store-${process.pid}-${Date.now()}.db`;
 
 test('normalizeModelName：规则与映射', () => {
   const aliases = { 'weird-name': 'glm-5.2' };

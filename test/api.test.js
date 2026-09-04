@@ -36,7 +36,10 @@ before(async () => {
         type: 'message',
         timestamp: '2026-08-20T01:00:10Z',
         message: { role: 'assistant', model: 'gpt-5.6-luna', provider: 'Tokeness-OpenAI', usage: { input: 10, output: 5, totalTokens: 15, cost: { total: 0.25 } } },
-      }),
+      }) +
+      // 结尾必须有换行：扫描器把「没有 \n 结尾的尾部」视为 pi 正在写入的半行而跳过
+      // （防重复解析），真实 pi 的 jsonl 每条事件都以 \n 结尾，fixture 保持一致。
+      '\n',
   );
   pricesFile = join(tmpdir(), `pits-prices-${Date.now()}.json`);
   writeFileSync(pricesFile, JSON.stringify({ currency: '¥', rates: { '$': 7.2 }, prices: {}, modelAliases: {} }));
@@ -49,6 +52,8 @@ before(async () => {
       PI_SESSIONS_DIR: sessionsDir,
       PRICES_FILE: pricesFile,
       OPENCODE_DB: join(tmpdir(), `pits-missing-${Date.now()}.db`),
+      // 扫描库必须隔离：库里的会话只增不减（归档），不隔离会①断言撞上生产数据，②把测试会话写进生产库
+      PI_SCAN_DB: join(tmpdir(), `pits-store-${Date.now()}.db`),
     },
     stdio: 'ignore',
   });
