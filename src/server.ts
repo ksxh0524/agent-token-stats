@@ -107,11 +107,17 @@ async function getApiData(): Promise<ApiData> {
   if (dataCache && Date.now() - dataCache.at < DATA_FRESH_MS) return dataCache.value;
   pendingScan ??= (async () => {
     try {
+      const t0 = Date.now();
       const cfg = await getPriceConfig();
       const pricesStat = await statSafe(PRICES_FILE);
+      const t1 = Date.now();
       const result = await scan(cfg.modelAliases);
+      const t2 = Date.now();
       const value: ApiData = { ...result, ...cfg, revision: clientRevision(result, pricesStat) };
       dataCache = { at: Date.now(), value };
+      console.log(
+        `[scan] 总计 ${t2 - t0}ms（配置 ${t1 - t0}ms + 扫描 ${t2 - t1}ms） 会话 ${result.sessions.length} 全量重解析 ${result.scannedFiles} 落库版本 ${result.revision}`,
+      );
       return value;
     } finally {
       pendingScan = null;
@@ -281,6 +287,9 @@ server.listen(PORT, () => {
   console.log(`agent-token-stats 已启动: http://localhost:${PORT}`);
   console.log(`pi 会话目录: ${process.env.PI_SESSIONS_DIR || '~/.pi/agent/sessions'}`);
   console.log(`opencode 数据库: ${process.env.OPENCODE_DB || '~/.local/share/opencode/opencode.db'}`);
+  // 启动预热：不等第一个请求才发现要扫描。用户打开页面时数据通常已就绪，
+  // 即使没就绪，pendingScan 也会把请求合并到这次预热上，不会重复扫
+  void getApiData().catch(() => {});
 });
 
 // 收到终止信号：先掐掉所有 keep-alive 连接，否则 server.close() 的回调

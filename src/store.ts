@@ -261,6 +261,16 @@ export class ScanStore {
     }
     this.db.close();
   }
+
+  /** 把 WAL 合并回主库并截断。scan 后调用：WAL 否则会无限累积（stop 的 800ms 退出
+   *  兜底经常赶不上 close() 里的 checkpoint），新进程打开时还要回放整个 WAL */
+  checkpoint(): void {
+    try {
+      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      /* 有并发连接时可能 busy，下一轮再合，无害 */
+    }
+  }
 }
 
 /** 库文件损坏时重建一次，别让一次坏盘把整个看板搞挂 */

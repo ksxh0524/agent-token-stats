@@ -79,6 +79,7 @@ export async function scan(aliases: Record<string, string> = {}): Promise<ScanRe
   }
 
   sessions.sort((a, b) => (b.startTs || '').localeCompare(a.startTs || ''));
+  st.checkpoint(); // WAL 合并回主库，防止无限累积（详见 store.checkpoint）
   return {
     generatedAt: new Date().toISOString(),
     sources: sources as ScanResult['sources'],
