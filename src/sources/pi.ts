@@ -33,10 +33,6 @@ export const PARSER_VERSION = 2;
 
 const CONCURRENCY = 8;
 
-function num(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-}
-
 function pickStr(v: unknown): string {
   return typeof v === 'string' && v ? v : '';
 }

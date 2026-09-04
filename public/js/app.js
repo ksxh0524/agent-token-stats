@@ -352,12 +352,13 @@ function bind() {
     if (b) switchSource(b.dataset.src);
   });
 
-  // 会话表懒加载：滚动接近表格尾部时追加下一批
+  // 会话表懒加载：滚动接近表格尾部时追加下一批。
+  // while：哨兵持续可见（剩余内容不满一屏）时一次回调要把剩余批次追完
   const sessScroll = document.querySelector('.sess-scroll');
   if (sessScroll && 'IntersectionObserver' in window) {
     const io = new IntersectionObserver(
       () => {
-        appendSessionBatch($('#sessTable'));
+        while (appendSessionBatch($('#sessTable')));
       },
       { root: sessScroll, rootMargin: '200px' },
     );
@@ -366,7 +367,7 @@ function bind() {
     // 保险丝：不支持 IntersectionObserver 就退化成滚动到底追加
     sessScroll?.addEventListener('scroll', () => {
       if (sessScroll.scrollTop + sessScroll.clientHeight >= sessScroll.scrollHeight - 120)
-        appendSessionBatch($('#sessTable'));
+        while (appendSessionBatch($('#sessTable')));
     });
   }
 

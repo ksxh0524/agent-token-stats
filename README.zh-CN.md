@@ -14,12 +14,14 @@
 
 ## 功能特性
 
-- **双数据源、严格隔离** — `pi`（`~/.pi/agent/sessions/*.jsonl`）与 `opencode`（`~/.local/share/opencode/opencode.db`）分别扫描，前端以 `pi / opencode` Tab 切换，数据绝不混算。
+- **多数据源、严格隔离** — 内置 `pi`（`~/.pi/agent/sessions/*.jsonl`）与 `opencode`（`~/.local/share/opencode/opencode.db`），前端 Tab 按 `/api/data` 的数据源 key 动态生成——接入新数据源（codex / claude code / …）只需后端加一个适配器，前端零改动。
+- **SQLite 持久化 + 归档承诺** — 聚合结果落盘 `.cache/store.db`（`PI_SCAN_DB` 可覆盖）：源会话被删后历史统计保留并标「档」；pi 的 resume/分支多文件同 id 自动合并，不重复计数。
+- **增量扫描** — pi 按字节偏移只解析新增内容（65MB 会话追加一行也只读几十字节），opencode 按库签名增量重建；解析器上下文（模型归属/会话名）随游标一并持久化。
 - **多维聚合** — 工作区总消耗、按模型、模型明细（条形图 + 可排序表格）、按提供商、会话明细。
 - **时间窗口** — 默认 **近 3 天**（`Asia/Shanghai` 口径），可切 7/30/90 天或自定义区间；窗口对所有维度严格生效。
 - **花费口径** — 单价以 **¥ / 百万 token** 存储，顶栏币种切换仅影响显示（按汇率换算）。`实` = provider 记录的 `usage.cost.total`，`估` = 无实费时按单价推算；花费在 **模型 × 天** 粒度取值，保证三处视图一致。
 - **模型归一** — 去组织前缀（`deepseek-ai/`、`nvidia/`）、小写、冒号转连字符，支持可编辑的别名映射表。
-- **扫描性能** — 行级预筛跳过纯文本行的 `JSON.parse` + 8 并发解析 + `mtime:size + 别名哈希` 磁盘缓存；运行中内存增量 + `/api/data` 2s 请求合并。
+- **增量轮询** — 看板每 30s 带数据版本号轮询：数据没变化服务端只回约 100 字节（实测全量 1.1MB → 短路 98 字节），跳过大载荷解析与整页重渲染；会话明细表分批渲染（先 150 行，滚动到底自动追加）。
 
 ## 环境要求
 
@@ -64,9 +66,9 @@ npm run fmt            # prettier 格式化
 | `PI_SESSIONS_DIR` | `~/.pi/agent/sessions` | pi 会话目录 |
 | `OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | opencode SQLite 路径（只读打开） |
 | `PRICES_FILE` | `./prices.json` | 价格/别名配置文件 |
-| `PI_SCAN_CACHE` | `./.cache/pi-scan-cache.json` | pi 磁盘缓存路径 |
+| `PI_SCAN_DB` | `./.cache/store.db` | 自有聚合库（SQLite，含归档与扫描游标） |
 
-> `prices.json` 与 `.cache/` 已 gitignore。解析口径变更时需 `PARSER_VERSION +1`（见 `src/scan.ts:36` 与 `AGENTS.md`），否则磁盘缓存不会失效。
+> `prices.json` 与 `.cache/` 已 gitignore。改 pi 解析口径时 `src/sources/pi.ts` 的 `PARSER_VERSION` +1、改 opencode 口径时 `src/sources/opencode.ts` 的 `OPENCODE_PARSER_VERSION` +1，库里旧口径的聚合会整体作废重算（见 `AGENTS.md`）。
 
 ## 界面导览
 
@@ -101,13 +103,13 @@ npm run fmt            # prettier 格式化
 - 全零用量（subagent 失败调用留的空壳）跳过，不污染模型维度
 - subagent 的 `cost` 是裸数字，assistant 的 `cost` 是 `{ total }`，两者都收
 - `totalTokens` 缺失时回退为 `input+output+cacheRead+cacheWrite` 四项之和
-- 解析口径变更时 `PARSER_VERSION` +1，磁盘缓存整体失效重算
+- 解析口径变更时 `PARSER_VERSION` +1，库内旧口径聚合整体作废重算
 
 ## API
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/api/data` | 扫描结果 + 价格配置（2s 内合并重复请求） |
+| `GET` | `/api/data` | 扫描结果 + 价格配置（2s 内合并重复请求）；带 `?rev=<上次 revision>` 时版本未变只回 `{unchanged:true}` |
 | `GET`/`POST` | `/api/prices` | 读取 / 保存价格配置（原子写盘，POST 限本机 `Origin`/`Host`） |
 | `GET` | `/health` | 健康检查 |
 
@@ -124,26 +126,28 @@ npm run fmt            # prettier 格式化
 
 ```
 src/
-  scan.ts      # pi jsonl 解析（预筛/并发/磁盘缓存）+ 模型名归一 + 多源合并
-  opencode.ts  # opencode SQLite (node:sqlite 只读) 解析，同一 SessionAgg 结构
-  util.ts      # 共享纯工具（用量累加、按天、模型名归一、哈希）
-  server.ts    # HTTP 服务 + 静态托管 + API 加固
-  types.ts     # 数据模型
+  scan.ts          # 扫描协调器：适配器注册表（ADAPTERS）+ 多源汇总，不认识具体数据源
+  store.ts         # 自有 SQLite：units（游标+聚合+归档）+ meta（版本号），只 upsert 永不 delete
+  sources/
+    pi.ts          # pi jsonl 适配器：字节偏移增量 + 解析器上下文持久化
+    opencode.ts    # opencode SQLite 适配器：库签名增量
+  server.ts        # HTTP 服务 + 静态托管 + /api/* 加固 + rev 短路
+  types.ts         # 数据模型（SourceAdapter 接口 / SessionAgg / ScanResult）
 public/
-  index.html   # 单页骨架（pi / opencode tab）
+  index.html       # 单页骨架（数据源 tab 动态生成）
   style.css
-  js/          # app/state/api/aggregate/render/calendar/format/defaults
-test/          # node:test 单测 + fixtures
-prices.json    # 运行时配置（已 gitignore）
-.cache/        # 扫描结果磁盘缓存（自动生成，已 gitignore，PI_SCAN_CACHE 可覆盖）
+  js/              # app/state/api/aggregate/render/calendar/format/defaults
+test/              # node:test 单测 + fixtures（含归档/增量轮询用例）
+prices.json        # 运行时配置（已 gitignore）
+.cache/store.db    # 自有聚合库（自动生成，已 gitignore，PI_SCAN_DB 可覆盖）
 manager.sh（+ manager.command 兼容链接）/ start.command / stop.command
 ```
 
 ## 性能
 
-- **首次冷扫描**：行级预筛跳过纯文本行的 `JSON.parse` + 8 并发文件解析，I/O 与解析重叠。
-- **重启后**：磁盘缓存按 `mtime:size + 别名哈希` 复用聚合结果，实测 532 个会话 ~5.4s → ~0.2s。
-- **运行中**：内存缓存增量刷新，`/api/data` 2s 内合并重复请求并让出事件循环保持响应。
+- **首次建库**：行级预筛跳过纯文本行的 `JSON.parse` + 8 并发解析，870 个会话文件一次性入库约 2 分钟（只发生一次）。
+- **日常重启 / 轮询**：游标（字节偏移 + 解析上下文）跨进程持久化，增量扫描约 0.6s；数据没变化时 `/api/data` 只回约 100 字节，前端零重渲染。
+- **改解析口径**：`PARSER_VERSION`/`OPENCODE_PARSER_VERSION` +1 触发一次全量重算入库，之后恢复增量。
 
 ## 开发
 

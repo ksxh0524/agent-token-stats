@@ -9,7 +9,7 @@ export const state = {
   source: 'pi', // 当前数据源 tab（按 /api/data 的 sources key 动态扩展，数据严格分开）
   workspace: 'ALL',
   search: '',
-  win: null, // {from, to}；首次加载后默认近 30 天
+  win: null, // {from, to}；首次加载后默认近 3 天
   auto: false,
   timer: null,
   currency: '¥', // 仅影响显示

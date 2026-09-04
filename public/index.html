@@ -73,6 +73,8 @@
     <summary>数据说明</summary>
     <ul class="note-list">
       <li>数据来源：pi = ~/.pi/agent/sessions 下的 *.jsonl（PI_SESSIONS_DIR 可覆盖）；opencode = ~/.local/share/opencode/opencode.db（OPENCODE_DB 可覆盖，只读）。</li>
+      <li>聚合结果持久存于本地 SQLite（.cache/store.db）：源会话被删除后历史统计保留，会话明细里标「档」；同一会话 id 的多个分支文件会自动合并，不重复计数。</li>
+      <li>扫描是增量的：会话文件只解析新增字节；看板每 30s 轮询带数据版本号，数据没变化时不再拉取/重算（meta 行会提示「无新数据」）。</li>
       <li>时间窗口对所有维度一致生效：窗口内没有用量的模型 / 工作区 / 会话不会出现。</li>
       <li>「实」= 会话数据中 provider 记录的真实费用；「估」= 无记录时按上方单价推算（均为按量口径）。</li>
       <li>消息数按会话在窗口内的 token 占比折算。</li>

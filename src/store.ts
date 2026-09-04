@@ -13,7 +13,7 @@
 //    因为 pi 的 resume/分支会让多个 jsonl 的 session 事件指向同一个 id
 //    （实测 870 个文件 → 863 个唯一 id）。base 若按 id 取，两个文件的增量
 //    会合并到同一份聚合上，用量翻倍 —— 这是真实踩过的坑。
-//  - 同 id 的多个 unit 贡献在【输出时】相加（见 scan.ts 的 groupBySession），
+//  - 同 id 的多个 unit 贡献在【输出时】相加（见 sources/pi.ts 的 groupBySession），
 //    这样既保证总量正确，又保持每个 unit 的增量独立性。
 //  - unit 的源文件被删除时，该行【不删除】—— 它就是归档。文件重新出现
 //    （同 inode）增量继续；被换成新文件（不同 inode）时全量重扫并覆盖本行。

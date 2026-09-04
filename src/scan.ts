@@ -9,8 +9,8 @@
 // 接入新数据源（codex / claude code / ...）：
 //   1. 写一个 SourceAdapter 实现放到 src/sources/<name>.ts
 //   2. 在下面 ADAPTERS 里加一行
-//   3. types.ts 的 SourceKind 联合类型加上新名字
-//   前端的来源切换按钮按 sources 的 key 自动生成，无需改前端。
+//   3. 前端零改动：来源 tab / meta 行按 /api/data 的 sources key 自动生成
+//      （types.ts 的 SourceKind 是开放式联合类型，加名字只是文档性标注）
 //
 // 通用口径（各源适配器必须遵守，测试盯着这些断言）：
 //  - 工作区 = 会话元数据里的 cwd 字段（真实项目路径）
