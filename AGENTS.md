@@ -1,6 +1,6 @@
 # AGENTS.md
 
-服务进程一律用 `./manager.sh <start|stop|restart|status>`（`manager.command` 为兼容符号链接）；禁止用 `start.command`（会弹浏览器）。
+服务进程一律用 `./manager.sh <start|stop|restart|status>`；禁止用 `start.command`（会弹浏览器）。
 `./manager.sh status` 退出码：0=运行中 3=未运行 4=进程在但 health 不通。
 改完 `src/*.ts` 后跑 `npm run typecheck && npm test`，再 `./manager.sh restart`。
 改 pi 解析口径时 `src/sources/pi.ts` 的 `PARSER_VERSION` +1；改 opencode 的 SQL/字段解释时 `src/sources/opencode.ts` 的 `OPENCODE_PARSER_VERSION` +1——否则库里旧口径的聚合不会作废重算。

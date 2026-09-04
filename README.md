@@ -47,7 +47,7 @@ Zero runtime dependencies (only devDependencies: `typescript` / `prettier`; SQLi
 ./manager.sh status --json    # one-line JSON for parsing
 ```
 
-`start.command` / `stop.command` are thin wrappers around `manager.sh` (`manager.command` is a compat symlink) with `--open`. `manager.sh` double-forks (perl `fork+setsid` fallback on macOS) so the server survives the caller.
+`start.command` / `stop.command` are thin wrappers around `manager.sh` (they auto-close the terminal tab on success and add `--open` to pop the browser). `manager.sh` double-forks (perl `fork+setsid` fallback on macOS) so the server survives the caller.
 
 ### npm equivalents
 
@@ -142,7 +142,7 @@ public/
 test/              # node:test suites + fixtures (incl. archive & polling cases)
 prices.json        # runtime config (gitignored)
 .cache/store.db    # own aggregate store (auto-generated, gitignored; override via PI_SCAN_DB)
-manager.sh (+ manager.command symlink) / start.command / stop.command
+manager.sh / start.command / stop.command
 ```
 
 ## Performance
@@ -159,7 +159,7 @@ npm run typecheck && npm test
 ```
 
 - After changing scanning/aggregation logic, verify `Σ(model) == total` with real data — gap must be `0` (see `AGENTS.md`).
-- Service management: always use `./manager.sh <start|stop|restart|status>` (`manager.command` is a compat symlink) in scripts; `start.command` pops a browser.
+- Service management: always use `./manager.sh <start|stop|restart|status>` in scripts; `start.command` pops a browser.
 
 ## License
 

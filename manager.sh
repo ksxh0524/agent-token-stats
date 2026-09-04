@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agent-token-stats 服务管理器 —— 规范入口为 manager.sh（manager.command 为兼容符号链接）。
+# agent-token-stats 服务管理器 —— 规范入口为 manager.sh。
 # agent / 脚本请用 ./manager.sh；用户双击用 start.command / stop.command（薄封装，会打开浏览器）。
 #
 # 用法: ./manager.sh <start|stop|restart|status> [选项]
