@@ -127,6 +127,42 @@ test('POST /api/prices：超大 body 被拒', async () => {
   assert.equal(r.ok, true); // 服务仍然健康
 });
 
+test('GET /api/data：版本号轮询短路（unchanged）', async () => {
+  const first = await (await fetch(`${BASE}/api/data`)).json();
+  assert.ok(first.revision, 'revision 必须存在');
+  const r = await fetch(`${BASE}/api/data?rev=${encodeURIComponent(first.revision)}`);
+  const j = await r.json();
+  assert.equal(j.unchanged, true);
+  assert.equal(j.revision, first.revision);
+  assert.equal(j.sessions, undefined); // 短路响应不带大载荷
+});
+
+test('源文件删除 → 归档翻转被版本号捕获，归档会话保留', async () => {
+  const first = await (await fetch(`${BASE}/api/data`)).json();
+  assert.equal(first.sessions.length, 1);
+  assert.notEqual(first.sessions[0].archived, true);
+
+  const { unlinkSync } = await import('node:fs');
+  unlinkSync(join(sessionsDir, '--proj--', '2026-08-20T01-00-00Z_s1.jsonl'));
+
+  // 服务端对 /api/data 有 2s 缓存：窗口内的 rev 轮询允许基于旧快照短路（下一轮必抓到），
+  // 这里等缓存过期，验证的是「最新扫描必须感知归档翻转」这一硬语义
+  await new Promise((r) => setTimeout(r, 2100));
+
+  // 带 rev 轮询：归档翻转是真实数据变化，不能被短路误判为 unchanged
+  const r2 = await fetch(`${BASE}/api/data?rev=${encodeURIComponent(first.revision)}`);
+  const j2 = await r2.json();
+  assert.equal(j2.unchanged, undefined);
+  assert.notEqual(j2.revision, first.revision);
+  assert.equal(j2.sessions.length, 1); // 会话没丢 —— 归档承诺
+  assert.equal(j2.sessions[0].archived, true);
+
+  // 版本号已同步，下一轮恢复短路
+  const r3 = await fetch(`${BASE}/api/data?rev=${encodeURIComponent(j2.revision)}`);
+  const j3 = await r3.json();
+  assert.equal(j3.unchanged, true);
+});
+
 test('静态资源白名单：目录穿越不可达', async () => {
   const r = await fetch(`${BASE}/../prices.json`);
   assert.equal([404, 400].includes(r.status), true);

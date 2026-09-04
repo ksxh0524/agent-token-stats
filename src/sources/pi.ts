@@ -406,7 +406,7 @@ async function processUnit(
   agg.messages = ctx.messages;
   agg.startTs = ctx.startTs;
   agg.endTs = ctx.endTs;
-  agg.archived = false; // 文件还在，不是归档
+  agg.archived = false; // 本轮还见得着文件；源里消失与否由 scan 输出阶段统一判定
 
   return {
     row: {
@@ -421,6 +421,7 @@ async function processUnit(
       ctx: JSON.stringify(ctx),
       sid: agg.id,
       agg,
+      archived: false,
     },
     skipped,
     fullRescan: !canIncremental,
@@ -483,9 +484,20 @@ export const piAdapter: SourceAdapter = {
     // 输出 = 全部 unit（本轮更新过的用内存里的新值 + 未变的历史值 + 归档）按会话 id 相加
     const merged = new Map(existing);
     for (const row of changedRows) merged.set(row.unit, row);
+
+    // 归档判定以「源里是否还有这个文件」为准，并把翻转落库：
+    // 不落库的话，增量轮询的版本号就感知不到「文件被删 → 会话转归档」这件事
+    const archiveChanges: { unit: string; archived: boolean }[] = [];
     for (const row of merged.values()) {
-      row.agg.archived = !seenUnits.has(row.unit); // 源里没有这个文件了 → 归档
+      const target = !seenUnits.has(row.unit);
+      row.agg.archived = target;
+      if (!!row.archived !== target) {
+        archiveChanges.push({ unit: row.unit, archived: target });
+        row.archived = target;
+      }
     }
+    if (archiveChanges.length) store.setArchived('pi', archiveChanges);
+
     const sessions = groupBySession(merged);
 
     const stat: SourceStat = {

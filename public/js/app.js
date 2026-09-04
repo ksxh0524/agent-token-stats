@@ -7,6 +7,7 @@ import {
   renderWorkspaceTable,
   renderModelTable,
   renderSessionTable,
+  appendSessionBatch,
   renderBars,
   moneyFmt,
 } from './render.js';
@@ -36,12 +37,21 @@ function defaultWin(days = 3, today = shanghaiToday(new Date().toISOString())) {
 }
 
 // ---------- 数据加载 ----------
+// lastRev = 服务端数据版本号（落库版本 + 价格配置指纹）。轮询带上它，
+// 数据没变化时服务端只回 {unchanged:true}，跳过大载荷解析与全部重渲染。
+let lastRev = null;
 let loading = false;
 async function load() {
   if (loading) return;
   loading = true;
   try {
-    const data = await getData();
+    const data = await getData(lastRev);
+    if (data.unchanged) {
+      if (state.data) updateMeta(state.data, true);
+      else lastRev = null; // 理论上首次不会命中短路；兜底下轮拿全量
+      return;
+    }
+    lastRev = data.revision;
     state.data = data;
     state.status = 'ok';
     if (!state.win) {
@@ -54,11 +64,7 @@ async function load() {
     buildWsSelect();
     buildSettings();
     renderAll();
-    $('#meta').textContent =
-      `最后更新 ${new Date(data.generatedAt).toLocaleString('zh-CN')} · ${data.sessions.length} 会话` +
-      ` · pi ${data.sources?.pi?.sessions ?? 0} / opencode ${data.sources?.opencode?.sessions ?? 0}` +
-      (data.skippedLines ? ` · 坏行 ${data.skippedLines}` : '') +
-      (data.sources?.opencode?.error ? ` · opencode 源异常` : '');
+    updateMeta(data);
   } catch (err) {
     state.status = 'error';
     const banner = $('#connBanner');
@@ -67,6 +73,18 @@ async function load() {
   } finally {
     loading = false;
   }
+}
+
+// meta 行：最后更新时间 / 会话数 / 各数据源概况（key 动态生成，新源自动出现）
+function updateMeta(data, unchanged = false) {
+  const srcParts = Object.entries(data.sources || {}).map(
+    ([k, v]) => `${k} ${v?.sessions ?? 0}${v?.error ? '（异常）' : ''}`,
+  );
+  $('#meta').textContent =
+    `最后更新 ${new Date(data.generatedAt).toLocaleString('zh-CN')} · ${data.sessions.length} 会话` +
+    (srcParts.length ? ` · ${srcParts.join(' / ')}` : '') +
+    (data.skippedLines ? ` · 坏行 ${data.skippedLines}` : '') +
+    (unchanged ? ' · 无新数据' : '');
 }
 
 function syncCurrencySelect() {
@@ -129,23 +147,26 @@ function renderAll() {
 }
 
 // ---------- 数据源 tab / 工作区下拉 ----------
-// 数据源 tab：标签带会话数；当前源不可用时自动落到有数据的源
+// 数据源 tab 按 /api/data 的 sources key 动态生成（新源接入前端零改动）；
+// 标签带会话数；当前源不可用时自动落到有数据的源
 function updateSrcTabs() {
   const stats = state.data?.sources || {};
   const sessions = state.data?.sessions || [];
-  const available = ['pi', 'opencode'].filter(
-    (k) => (stats[k] && stats[k].enabled) || sessions.some((s) => s.source === k),
-  );
+  const seen = [...new Set([...Object.keys(stats), ...sessions.map((s) => s.source)])];
+  const available = seen.filter((k) => (stats[k] && stats[k].enabled) || sessions.some((s) => s.source === k));
   if (!available.includes(state.source)) {
     state.source = available[0] || 'pi';
     savePrefs();
   }
-  document.querySelectorAll('#srcTabs button').forEach((b) => {
-    const k = b.dataset.src;
-    const n = stats[k]?.sessions ?? sessions.filter((s) => s.source === k).length;
-    b.classList.toggle('active', k === state.source);
-    b.textContent = `${k}（${n}）`;
-  });
+  $('#srcTabs').innerHTML =
+    seen
+      .map((k) => {
+        const n = stats[k]?.sessions ?? sessions.filter((s) => s.source === k).length;
+        const mark = stats[k] && !stats[k].enabled ? ' ⚠' : '';
+        const active = k === state.source ? ' class="active"' : '';
+        return `<button data-src="${esc(k)}"${active}>${esc(k)}（${n}${mark}）</button>`;
+      })
+      .join('') || '';
 }
 
 function switchSource(src) {
@@ -325,9 +346,29 @@ function bind() {
     }, 150);
   });
 
-  document.querySelectorAll('#srcTabs button').forEach((b) =>
-    b.addEventListener('click', () => switchSource(b.dataset.src)),
-  );
+  // tab 按钮是动态生成的，事件挂在容器上（委托），新源按钮无需重新绑定
+  $('#srcTabs').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-src]');
+    if (b) switchSource(b.dataset.src);
+  });
+
+  // 会话表懒加载：滚动接近表格尾部时追加下一批
+  const sessScroll = document.querySelector('.sess-scroll');
+  if (sessScroll && 'IntersectionObserver' in window) {
+    const io = new IntersectionObserver(
+      () => {
+        appendSessionBatch($('#sessTable'));
+      },
+      { root: sessScroll, rootMargin: '200px' },
+    );
+    io.observe($('#sessSentinel'));
+  } else {
+    // 保险丝：不支持 IntersectionObserver 就退化成滚动到底追加
+    sessScroll?.addEventListener('scroll', () => {
+      if (sessScroll.scrollTop + sessScroll.clientHeight >= sessScroll.scrollHeight - 120)
+        appendSessionBatch($('#sessTable'));
+    });
+  }
 
   rangePicker = mountRangePicker($('#range'), {
     win: () => state.win || { from: '', to: '' },

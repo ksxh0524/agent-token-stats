@@ -20,14 +20,18 @@
 //
 // 表结构：
 //  - units        每个扫描单位的游标 + 该单位的累计聚合（含已归档的）
-//  - meta         schema 版本
+//  - meta         schema 版本 + data_revision（数据版本号，见下）
+//
+// data_revision：任何「会影响 /api/data 输出」的落库变化都 +1（unit 聚合更新、
+// 归档状态翻转）。服务端拿它和价格配置指纹拼成复合版本号，前端轮询带上
+// 上次的版本号 —— 数据没变就只回几百字节，不再传几 MB 的会话大载荷。
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SessionAgg, SourceKind } from './types.ts';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export function defaultStoreFile(): string {
   return process.env.PI_SCAN_DB || fileURLToPath(new URL('../.cache/store.db', import.meta.url));
@@ -45,6 +49,7 @@ export interface UnitRow {
   ctx: string; // 适配器的解析器上下文 JSON（恢复增量解析状态用）
   sid: string; // 该 unit 当前归属的会话 id（unit.agg 的 key）
   agg: SessionAgg; // 该 unit 的累计聚合（增量 merge 的权威基准）
+  archived: boolean; // 源里已无此 unit（聚合保留展示）；落库列，归档翻转会计入数据版本
 }
 
 export class ScanStore {
@@ -52,6 +57,8 @@ export class ScanStore {
   private readonly allStmt;
   private readonly upsertStmt;
   private readonly countSidStmt;
+  private readonly revisionStmt;
+  private readonly setArchivedStmt;
 
   constructor(dbPath: string = defaultStoreFile()) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -60,17 +67,18 @@ export class ScanStore {
     this.db.exec('PRAGMA synchronous = NORMAL');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS units (
-        source TEXT    NOT NULL,
-        unit   TEXT    NOT NULL,
-        size   INTEGER NOT NULL,
-        mtime  REAL    NOT NULL,
-        inode  TEXT    NOT NULL,
-        offset INTEGER NOT NULL,
-        pv     INTEGER NOT NULL,
-        ah     TEXT    NOT NULL,
-        ctx    TEXT    NOT NULL,
-        sid    TEXT    NOT NULL,
-        agg    TEXT    NOT NULL,
+        source   TEXT    NOT NULL,
+        unit     TEXT    NOT NULL,
+        size     INTEGER NOT NULL,
+        mtime    REAL    NOT NULL,
+        inode    TEXT    NOT NULL,
+        offset   INTEGER NOT NULL,
+        pv       INTEGER NOT NULL,
+        ah       TEXT    NOT NULL,
+        ctx      TEXT    NOT NULL,
+        sid      TEXT    NOT NULL,
+        agg      TEXT    NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (source, unit)
       ) WITHOUT ROWID;
       CREATE TABLE IF NOT EXISTS meta (
@@ -80,37 +88,53 @@ export class ScanStore {
     `);
     const v = Number(this.getMeta('schema_version') ?? 0);
     if (v !== SCHEMA_VERSION) {
-      this.db.exec('DROP TABLE IF EXISTS units');
-      this.db.exec(`
-        CREATE TABLE units (
-          source TEXT    NOT NULL,
-          unit   TEXT    NOT NULL,
-          size   INTEGER NOT NULL,
-          mtime  REAL    NOT NULL,
-          inode  TEXT    NOT NULL,
-          offset INTEGER NOT NULL,
-          pv     INTEGER NOT NULL,
-          ah     TEXT    NOT NULL,
-          ctx    TEXT    NOT NULL,
-          sid    TEXT    NOT NULL,
-          agg    TEXT    NOT NULL,
-          PRIMARY KEY (source, unit)
-        ) WITHOUT ROWID;
-      `);
+      if (v > 0 && v < SCHEMA_VERSION) {
+        // 小版本升级：尽力 ALTER 保留已积累的聚合（迁移失败再整体重建）
+        try {
+          this.db.exec('ALTER TABLE units ADD COLUMN archived INTEGER NOT NULL DEFAULT 0');
+        } catch {
+          /* 列已存在等情况，忽略 */
+        }
+      } else {
+        this.db.exec('DROP TABLE IF EXISTS units');
+        this.db.exec(`
+          CREATE TABLE units (
+            source   TEXT    NOT NULL,
+            unit     TEXT    NOT NULL,
+            size     INTEGER NOT NULL,
+            mtime    REAL    NOT NULL,
+            inode    TEXT    NOT NULL,
+            offset   INTEGER NOT NULL,
+            pv       INTEGER NOT NULL,
+            ah       TEXT    NOT NULL,
+            ctx      TEXT    NOT NULL,
+            sid      TEXT    NOT NULL,
+            agg      TEXT    NOT NULL,
+            archived INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (source, unit)
+          ) WITHOUT ROWID;
+        `);
+      }
       this.setMeta('schema_version', String(SCHEMA_VERSION));
     }
-    this.allStmt = this.db.prepare('SELECT source, unit, size, mtime, inode, offset, pv, ah, ctx, sid, agg FROM units WHERE source = ?');
+    this.allStmt = this.db.prepare('SELECT source, unit, size, mtime, inode, offset, pv, ah, ctx, sid, agg, archived FROM units WHERE source = ?');
     this.upsertStmt = this.db.prepare(
-      `INSERT INTO units (source, unit, size, mtime, inode, offset, pv, ah, ctx, sid, agg)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO units (source, unit, size, mtime, inode, offset, pv, ah, ctx, sid, agg, archived)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(source, unit) DO UPDATE SET
          size = excluded.size, mtime = excluded.mtime, inode = excluded.inode,
          offset = excluded.offset, pv = excluded.pv, ah = excluded.ah,
-         ctx = excluded.ctx, sid = excluded.sid, agg = excluded.agg`,
+         ctx = excluded.ctx, sid = excluded.sid, agg = excluded.agg,
+         archived = excluded.archived`,
     );
     this.countSidStmt = this.db.prepare(
       'SELECT COUNT(DISTINCT sid) AS n FROM units WHERE source = ?',
     );
+    this.revisionStmt = this.db.prepare(
+      `INSERT INTO meta (key, value) VALUES ('data_revision', '1')
+       ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`,
+    );
+    this.setArchivedStmt = this.db.prepare('UPDATE units SET archived = ? WHERE source = ? AND unit = ?');
   }
 
   private getMeta(key: string): string | null {
@@ -136,9 +160,14 @@ export class ScanStore {
   /** 一个数据源的全部 unit 行（含源文件已删除的归档行） */
   getUnits(source: SourceKind): Map<string, UnitRow> {
     const out = new Map<string, UnitRow>();
-    for (const row of this.allStmt.all(source) as unknown as UnitRow[]) {
+    for (const row of this.allStmt.all(source) as unknown as (Omit<UnitRow, 'agg' | 'archived'> & { agg: string; archived: number })[]) {
       try {
-        out.set(row.unit, { ...row, source: row.source as SourceKind, agg: JSON.parse(row.agg as unknown as string) as SessionAgg });
+        out.set(row.unit, {
+          ...row,
+          source: row.source as SourceKind,
+          agg: JSON.parse(row.agg) as SessionAgg,
+          archived: !!Number(row.archived),
+        });
       } catch {
         /* 单行坏数据只作废这一行 */
       }
@@ -164,8 +193,34 @@ export class ScanStore {
           r.ctx,
           r.sid,
           JSON.stringify(r.agg),
+          r.archived ? 1 : 0,
         );
       }
+      this.revisionStmt.run(); // 有实际落库变化 → 数据版本 +1
+      this.db.exec('COMMIT');
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        /* 可能已自动回滚 */
+      }
+      throw err;
+    }
+  }
+
+  /** 数据版本号：任何影响输出的落库变化都会使其递增（详见文件头注释） */
+  getRevision(): number {
+    return Number(this.getMeta('data_revision') ?? 0);
+  }
+
+  /** 批量翻转归档状态；有实际翻转才 +1 版本。供适配器在输出阶段同步归档态用 */
+  setArchived(source: SourceKind, changes: Iterable<{ unit: string; archived: boolean }>): void {
+    const list = [...changes];
+    if (!list.length) return;
+    this.db.exec('BEGIN');
+    try {
+      for (const c of list) this.setArchivedStmt.run(c.archived ? 1 : 0, source, c.unit);
+      this.revisionStmt.run();
       this.db.exec('COMMIT');
     } catch (err) {
       try {

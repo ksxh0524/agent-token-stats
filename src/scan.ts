@@ -85,5 +85,6 @@ export async function scan(aliases: Record<string, string> = {}): Promise<ScanRe
     sessions,
     scannedFiles,
     skippedLines,
+    revision: String(st.getRevision()),
   };
 }

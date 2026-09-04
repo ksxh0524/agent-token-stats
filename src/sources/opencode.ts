@@ -216,7 +216,9 @@ export const opencodeAdapter: SourceAdapter = {
     // 快路径：签名 + 口径 + 别名都没变，源库一个字节都不碰
     const probe = [...current.values()][0];
     if (sig && probe && probe.ctx === sig && probe.pv === pv && probe.ah === ah) {
-      const sessions = sortSessions([...current.values(), ...foreign].map((r) => ({ ...r.agg })));
+      const sessions = sortSessions(
+        [...current.values(), ...foreign].map((r) => ({ ...r.agg, archived: r.archived || r.agg.archived === true })),
+      );
       return {
         sessions,
         scannedUnits: 0,
@@ -229,8 +231,12 @@ export const opencodeAdapter: SourceAdapter = {
     let statRes: SourceStat;
 
     if (!sig) {
-      // 源库不存在：归档照常输出，enabled=false
-      const sessions = sortSessions([...current.values(), ...foreign].map((r) => ({ ...r.agg, archived: true })));
+      // 源库不存在：归档照常输出，enabled=false。归档翻转落库，增量轮询才能感知到
+      const flips = [...current.values()].filter((r) => !r.archived).map((r) => ({ unit: r.unit, archived: true }));
+      if (flips.length) store.setArchived('opencode', flips);
+      const sessions = sortSessions(
+        [...current.values(), ...foreign].map((r) => ({ ...r.agg, archived: true })),
+      );
       return {
         sessions,
         scannedUnits: 0,
@@ -264,12 +270,16 @@ export const opencodeAdapter: SourceAdapter = {
             ah,
             ctx: sig,
             sid,
-            agg: { ...agg, archived: false },
+            agg,
+            archived: false,
           });
         }
         for (const [sid, row] of current) {
-          if (!built.has(sid)) rows.push({ ...row, agg: { ...row.agg, archived: true }, ctx: sig, pv, ah });
+          if (!built.has(sid)) rows.push({ ...row, ctx: sig, pv, ah, archived: true });
         }
+        // 更早库路径留下的 foreign 行一次性把归档列补齐（旧版本归档态写在 agg JSON 里）
+        const foreignFix = foreign.filter((r) => !r.archived).map((r) => ({ unit: r.unit, archived: true }));
+        if (foreignFix.length) store.setArchived('opencode', foreignFix);
         store.putUnits(rows);
         statRes = { location: dbPath, enabled: true, sessions: built.size };
       } finally {
@@ -285,7 +295,7 @@ export const opencodeAdapter: SourceAdapter = {
     }
 
     const after = store.getUnits('opencode');
-    const sessions = sortSessions([...after.values()].map((r) => ({ ...r.agg })));
+    const sessions = sortSessions([...after.values()].map((r) => ({ ...r.agg, archived: r.archived })));
     return {
       sessions,
       scannedUnits: scanned,

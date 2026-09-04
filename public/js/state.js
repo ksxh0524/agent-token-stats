@@ -6,7 +6,7 @@ const PREF_KEY = 'pits-prefs-v2';
 
 export const state = {
   data: null, // ApiData
-  source: 'pi', // pi | opencode（两个 tab，数据分开）
+  source: 'pi', // 当前数据源 tab（按 /api/data 的 sources key 动态扩展，数据严格分开）
   workspace: 'ALL',
   search: '',
   win: null, // {from, to}；首次加载后默认近 30 天
@@ -25,7 +25,8 @@ export const state = {
 export function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
-    if (p.source === 'pi' || p.source === 'opencode') state.source = p.source;
+    // source 不设白名单：新数据源接入后偏好直接生效；源不可用时 updateSrcTabs 会自动兜底
+    if (typeof p.source === 'string' && p.source) state.source = p.source;
     if (typeof p.workspace === 'string') state.workspace = p.workspace;
     if (p.currency) state.currency = p.currency;
     if (typeof p.auto === 'boolean') state.auto = p.auto;

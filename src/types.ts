@@ -84,8 +84,10 @@ export interface ScanResult {
   generatedAt: string;
   sources: Record<SourceKind, SourceStat>;
   sessions: SessionAgg[];
-  scannedFiles: number;                  // pi 本轮实际解析的文件数
-  skippedLines: number;                  // 解析失败的行数（坏行统计，两数据源合计）
+  scannedFiles: number;                  // 本轮全量重解析的扫描单位数（增量命中的不算）
+  skippedLines: number;                  // 解析失败的行数（坏行统计，各数据源合计）
+  /** 数据版本号 = 落库版本 + 价格配置指纹。前端轮询带上它，没变就只回空载荷 */
+  revision: string;
 }
 
 // /api/data 返回体 = 扫描结果 + 价格配置

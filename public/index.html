@@ -80,11 +80,8 @@
   </details>
 </section>
 
-<!-- 数据源：pi / opencode 两个 tab，数据严格分开 -->
-<nav id="srcTabs">
-  <button data-src="pi" class="active">pi</button>
-  <button data-src="opencode">opencode</button>
-</nav>
+<!-- 数据源 tab：按 /api/data 的 sources key 动态生成（接入新数据源无需改前端） -->
+<nav id="srcTabs"></nav>
 
 <main>
   <!-- 单页：从上往下依次 总览卡片 → 工作区 → 模型 → 提供商 → 会话明细 -->
@@ -163,6 +160,7 @@
           </tr></thead>
           <tbody></tbody>
         </table>
+        <div id="sessSentinel" aria-hidden="true"></div>
       </div>
     </section>
   </section>

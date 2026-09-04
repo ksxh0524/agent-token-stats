@@ -102,6 +102,31 @@ export function renderModelTable(tableEl, rows, sortState, totalAll, mf) {
   }
 }
 
+// ---------- 会话明细：渐进渲染 ----------
+// 863+ 行一次性 innerHTML 重建拖慢每次交互；改为先渲染一小批，
+// 滚动到底（哨兵进入视口）再追加下一批。筛选 / 排序变化时从头重置。
+const SESS_BATCH = 150;
+const sessRender = { rows: [], mf: null, cursor: 0 };
+
+function sessRowHtml(r) {
+  const tag = r.real > 0 ? '<span class="badge-real">实</span>' : r.est > 0 ? '<span class="badge-est">估</span>' : '';
+  const arc = r.archived ? '<span class="badge-est" title="源会话已删除，此为本地保留的历史归档">档</span>' : '';
+  return `
+      <tr>
+        <td title="id: ${esc(r.id)} · ${esc(r.name)}">${esc(r.name)}${arc}</td>
+        <td class="path" title="${esc(r.cwd)}">${esc(r.cwd)}</td>
+        <td class="num" title="${fmtFull(r.totalTokens)}">${fmt(r.totalTokens)}</td>
+        <td class="num">${fmt(r.input)}</td>
+        <td class="num">${fmt(r.output)}</td>
+        <td class="num">${fmt(r.cacheRead)}</td>
+        <td class="num">${r.hitRate.toFixed(1)}%</td>
+        <td class="num">${r.messages}</td>
+        <td class="num money">${sessRender.mf(r.cost)}${tag}</td>
+        <td>${esc(r.topModel)}</td>
+      </tr>`;
+}
+
+/** 重置并渲染第一批（renderAll 每次调用；rows 为富化+排序后的数据） */
 export function renderSessionTable(el, enrichedRows, sortState, mf) {
   const rows = enrichedRows.map((e) => ({
     name: e.s.name,
@@ -117,27 +142,30 @@ export function renderSessionTable(el, enrichedRows, sortState, mf) {
     est: e.est,
     real: e.real,
     topModel: e.topModel,
+    archived: !!e.s.archived,
   }));
   const sorted = sortRows(rows, sortState);
-  el.querySelector('tbody').innerHTML =
-    sorted
-      .map((r) => {
-        const tag = r.real > 0 ? '<span class="badge-real">实</span>' : r.est > 0 ? '<span class="badge-est">估</span>' : '';
-        return `
-      <tr>
-        <td title="id: ${esc(r.id)} · ${esc(r.name)}">${esc(r.name)}</td>
-        <td class="path" title="${esc(r.cwd)}">${esc(r.cwd)}</td>
-        <td class="num" title="${fmtFull(r.totalTokens)}">${fmt(r.totalTokens)}</td>
-        <td class="num">${fmt(r.input)}</td>
-        <td class="num">${fmt(r.output)}</td>
-        <td class="num">${fmt(r.cacheRead)}</td>
-        <td class="num">${r.hitRate.toFixed(1)}%</td>
-        <td class="num">${r.messages}</td>
-        <td class="num money">${mf(r.cost)}${tag}</td>
-        <td>${esc(r.topModel)}</td>
-      </tr>`;
-      })
-      .join('') || '<tr><td colspan="10" class="empty">当前筛选下无匹配会话</td></tr>';
+  sessRender.rows = sorted;
+  sessRender.mf = mf;
+  sessRender.cursor = 0;
+  const tbody = el.querySelector('tbody');
+  if (!sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">当前筛选下无匹配会话</td></tr>';
+    sessRender.cursor = 0;
+    return;
+  }
+  const first = sorted.slice(0, SESS_BATCH).map(sessRowHtml).join('');
+  tbody.innerHTML = first;
+  sessRender.cursor = Math.min(SESS_BATCH, sorted.length);
+}
+
+/** 已渲染批数尽头时由滚动哨兵调用；返回是否还有剩余 */
+export function appendSessionBatch(el) {
+  if (!sessRender.rows.length || sessRender.cursor >= sessRender.rows.length) return false;
+  const next = sessRender.rows.slice(sessRender.cursor, sessRender.cursor + SESS_BATCH);
+  el.querySelector('tbody').insertAdjacentHTML('beforeend', next.map(sessRowHtml).join(''));
+  sessRender.cursor += next.length;
+  return sessRender.cursor < sessRender.rows.length;
 }
 
 export function renderBars(el, items, limit, mf) {

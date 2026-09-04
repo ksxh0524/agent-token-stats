@@ -5,7 +5,7 @@
 //  - Origin/Host 校验，防恶意网页跨站写配置
 //  - /api/data 结果 2s 内复用缓存，并发请求合并为一次扫描
 import { scan } from './scan.ts';
-import type { ApiData, ModelPrice, PriceConfig } from './types.ts';
+import type { ApiData, ModelPrice, PriceConfig, ScanResult } from './types.ts';
 import { readFile, writeFile, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -95,13 +95,20 @@ const DATA_FRESH_MS = 2000;
 let dataCache: { at: number; value: ApiData } | null = null;
 let pendingScan: Promise<ApiData> | null = null;
 
+// 对外的数据版本号 = 落库版本(revision) + 价格配置指纹。
+// 价格/汇率/别名变了即使扫描数据没变，前端也要拿到新载荷重算显示。
+function clientRevision(result: ScanResult, pricesStat: { mtimeMs: number; size: number } | null): string {
+  return `${result.revision}:${pricesStat ? `${pricesStat.mtimeMs}:${pricesStat.size}` : 'none'}`;
+}
+
 async function getApiData(): Promise<ApiData> {
   if (dataCache && Date.now() - dataCache.at < DATA_FRESH_MS) return dataCache.value;
   pendingScan ??= (async () => {
     try {
       const cfg = await getPriceConfig();
+      const pricesStat = await statSafe(PRICES_FILE);
       const result = await scan(cfg.modelAliases);
-      const value: ApiData = { ...result, ...cfg };
+      const value: ApiData = { ...result, ...cfg, revision: clientRevision(result, pricesStat) };
       dataCache = { at: Date.now(), value };
       return value;
     } finally {
@@ -224,7 +231,14 @@ const server = createServer((req, res) => {
 
       if (p.startsWith('/api/')) {
         if (p === '/api/data') {
-          sendJson(res, 200, await getApiData());
+          const cur = await getApiData();
+          // 增量轮询：客户端版本号没变就只回几百字节，不传几 MB 的会话大载荷
+          const clientRev = url.searchParams.get('rev');
+          if (clientRev && clientRev === cur.revision) {
+            sendJson(res, 200, { unchanged: true, revision: cur.revision, generatedAt: cur.generatedAt });
+            return;
+          }
+          sendJson(res, 200, cur);
           return;
         }
         if (p === '/api/prices') {

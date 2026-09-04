@@ -6,8 +6,10 @@ async function fetchJSON(url, opts) {
   return res.json();
 }
 
-export function getData() {
-  return fetchJSON('/api/data');
+// rev = 上次拿到的数据版本号；服务端发现没变化只回 {unchanged:true}（几百字节），
+// 避免每 30s 全量拉几 MB 的会话大载荷
+export function getData(rev) {
+  return fetchJSON('/api/data' + (rev ? `?rev=${encodeURIComponent(rev)}` : ''));
 }
 
 export function saveConfig(cfg) {
