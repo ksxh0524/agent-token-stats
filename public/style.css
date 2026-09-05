@@ -111,7 +111,8 @@ td.path { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .table-scroll thead th, .price-table-wrap thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
 /* 会话明细：固定高度，内部滚动 */
 .table-scroll.sess-scroll { max-height: 440px; }
-#modelTable tfoot td, #modelTable tfoot th {
+#modelTable tfoot td, #modelTable tfoot th,
+#dayTable tfoot td, #dayTable tfoot th {
   border-top: 2px solid var(--border); border-bottom: none; font-weight: 600;
   position: sticky; bottom: 0; background: var(--card);
 }
@@ -119,13 +120,25 @@ tr.clickable { cursor: pointer; }
 tr.clickable:hover { background: var(--accent-soft); }
 tr.active { background: var(--accent-soft); }
 
-.bar-row { display: grid; grid-template-columns: minmax(140px, 220px) 1fr minmax(180px, 240px); align-items: center; gap: 10px; padding: 4px 0; }
-.bar-label { overflow: hidden; text-overflow: ellipsis; }
-.bar-track { background: #eef0f3; border-radius: 6px; height: 18px; overflow: hidden; }
-.bar-fill { background: var(--accent); height: 100%; border-radius: 6px; }
-.bar-val { text-align: right; font-variant-numeric: tabular-nums; }
-.bar-sub { display: block; color: var(--muted); font-size: 11px; }
-.bar-sub .money, td.money, .money { color: var(--danger); font-variant-numeric: tabular-nums; }
+/* 会话明细：会话名 + 下方会话 ID（小号等宽弱色） */
+#sessTable .sess-name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+#sessTable .sess-id {
+  font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted);
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* 模型明细：框宽贴内容（列数多但值都很短，铺满整行全是浪费的空白） */
+#modelPanel { width: fit-content; max-width: 100%; min-width: 560px; }
+#modelTable { width: auto; }
+#modelPanel .table-scroll { max-width: 100%; }
+#modelPanel .note { white-space: normal; }
+
+/* 按天用量：与模型表同款贴内容宽度 */
+#dayPanel { width: fit-content; max-width: 100%; min-width: 560px; }
+#dayTable { width: auto; }
+#dayPanel .table-scroll { max-width: 100%; }
+
+td.money, .money { color: var(--danger); font-variant-numeric: tabular-nums; }
 .badge-real { color: #0a8f3c; font-size: 11px; margin-left: 3px; }
 .badge-est { color: var(--muted); font-size: 11px; margin-left: 3px; }
 

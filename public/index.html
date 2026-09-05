@@ -78,8 +78,11 @@
       <li>聚合结果持久存于本地 SQLite（.cache/store.db）：源会话被删除后历史统计保留，会话明细里标「档」；同一会话 id 的多个分支文件会自动合并，不重复计数。</li>
       <li>扫描是增量的：会话文件只解析新增字节；看板每 30s 轮询带数据版本号，数据没变化时不再拉取/重算（meta 行会提示「无新数据」）。</li>
       <li>时间窗口对所有维度一致生效：窗口内没有用量的模型 / 工作区 / 会话不会出现。</li>
-      <li>「实」= 会话数据中 provider 记录的真实费用；「估」= 无记录时按上方单价推算（均为按量口径）。</li>
-      <li>消息数按会话在窗口内的 token 占比折算。</li>
+      <li>「实」= 数据中记录的真实费用；「估」= 无真实费用时按上方单价推算；「实+估」= 窗口内两种口径混合（部分天有真实费用，其余推算）。均为按量口径。</li>
+      <li>「输入(未命中)」只计缓存未命中的输入；命中部分在「缓存命中」列，两者相加才是总输入体量。</li>
+      <li>「推理」= provider 上报的推理 token：pi 源已含在「输出」内（只是拆出来展示）；opencode 源与「输出」分列、互不包含，已计入总 token。</li>
+      <li>消息数按会话在窗口内的 token 占比折算；「按服务商」视图的消息数再按各服务商 token 占全会话的比例分摊，不会重复计数。</li>
+      <li>「按天用量」= 逐日汇总；当天花费按「模型×天」粒度取真实优先、估算兜底，与会话/模型视图一致。</li>
     </ul>
   </details>
 </section>
@@ -88,7 +91,7 @@
 <nav id="srcTabs"></nav>
 
 <main>
-  <!-- 单页：从上往下依次 总览卡片 → 工作区 → 模型 → 提供商 → 会话明细 -->
+  <!-- 单页：从上往下依次 总览卡片 → 工作区 → 模型用量明细（仅模型/按服务商切换） → 会话明细 -->
   <section id="overview">
     <div class="cards" id="cards"></div>
     <div class="controls">
@@ -100,12 +103,12 @@
     </div>
     <section class="panel">
       <h2>工作区总消耗 <span class="tag" id="wsTag"></span></h2>
-      <table id="wsTable">
-        <thead><tr>
-          <th data-k="key">工作区</th>
-          <th class="num" data-k="sessions">会话</th>
-          <th class="num" data-k="totalTokens">总 token</th>
-          <th class="num" data-k="input">输入</th>
+        <table id="wsTable">
+          <thead><tr>
+            <th data-k="key">工作区</th>
+            <th class="num" data-k="sessions">会话</th>
+            <th class="num" data-k="totalTokens">总 token</th>
+            <th class="num" data-k="input" title="只计未命中缓存的输入，命中部分在「缓存命中」列">输入(未命中)</th>
           <th class="num" data-k="output">输出</th>
           <th class="num" data-k="cacheRead">缓存命中</th>
           <th class="num" data-k="cacheWrite">缓存写入</th>
@@ -114,11 +117,30 @@
         <tbody></tbody>
       </table>
     </section>
-    <section class="panel">
-      <h2>按模型 <span class="tag" id="modelBarTag"></span></h2>
-      <div id="models"></div>
+    <section class="panel" id="dayPanel">
+      <h2>按天用量 <span class="tag" id="dayTag"></span></h2>
+      <div class="table-scroll">
+        <table id="dayTable">
+          <thead><tr>
+            <th data-k="key">日期</th>
+            <th class="num" data-k="sessions" title="当日有用量的会话数（合计列 = 会话×天）">会话</th>
+            <th class="num" data-k="messages">消息</th>
+            <th class="num" data-k="input" title="只计未命中缓存的输入，命中部分在「缓存命中」列">输入(未命中)</th>
+            <th class="num" data-k="output">输出</th>
+            <th class="num" data-k="cacheRead">缓存命中</th>
+            <th class="num" data-k="cacheWrite">缓存写入</th>
+            <th class="num" data-k="reasoning" title="provider 上报的推理 token。pi 源已含在「输出」内；opencode 源与「输出」分列另计（两种口径都已正确计入总 token），本列只是拆出来看思考占比">推理</th>
+            <th class="num" data-k="totalTokens">总 token</th>
+            <th class="num" data-k="realCost">实花</th>
+            <th class="num" data-k="estCost">估算</th>
+            <th class="num" data-k="cost">花费</th>
+          </tr></thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
     </section>
-    <section class="panel">
+    <section class="panel" id="modelPanel">
       <h2>
         模型用量明细 <span class="tag" id="modelTag"></span>
         <span id="modelViewSwitch" class="view-switch" title="切换模型视图">
@@ -131,11 +153,11 @@
           <thead><tr>
             <th data-k="key">模型</th>
             <th class="num" data-k="sessions">会话</th>
-            <th class="num" data-k="input">输入</th>
+            <th class="num" data-k="input" title="只计未命中缓存的输入，命中部分在「缓存命中」列">输入(未命中)</th>
             <th class="num" data-k="output">输出</th>
             <th class="num" data-k="cacheRead">缓存命中</th>
             <th class="num" data-k="cacheWrite">缓存写入</th>
-            <th class="num" data-k="reasoning">推理</th>
+            <th class="num" data-k="reasoning" title="provider 上报的推理 token。pi 源已含在「输出」内；opencode 源与「输出」分列另计（两种口径都已正确计入总 token），本列只是拆出来看思考占比">推理</th>
             <th class="num" data-k="totalTokens">总 token</th>
             <th class="num" data-k="pct">占比</th>
             <th class="num" data-k="realCost">实花</th>
@@ -149,18 +171,16 @@
       <p class="note" id="costNote"></p>
     </section>
     <section class="panel">
-      <h2>按提供商 <span class="tag">窗口内活跃会话 · 全会话口径（该维度未按天拆分）</span></h2>
-      <div id="providers"></div>
-    </section>
-    <section class="panel">
       <h2>会话明细 <span class="tag" id="sessTag"></span></h2>
       <div class="table-scroll sess-scroll">
         <table id="sessTable">
           <thead><tr>
-            <th data-k="name">会话名</th>
+            <th data-k="name">会话名 / ID</th>
             <th data-k="cwd">工作区</th>
+            <th class="num" data-k="startTs">开始</th>
+            <th class="num" data-k="durationMs">时长</th>
             <th class="num" data-k="totalTokens">总 token</th>
-            <th class="num" data-k="input">输入</th>
+            <th class="num" data-k="input" title="只计未命中缓存的输入，命中部分在「缓存命中」列">输入(未命中)</th>
             <th class="num" data-k="output">输出</th>
             <th class="num" data-k="cacheRead">缓存命中</th>
             <th class="num" data-k="hitRate">命中率</th>

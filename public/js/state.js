@@ -16,6 +16,7 @@ export const state = {
   modelView: 'flat', // 模型明细视图：flat = 仅模型 | provider = 按服务商分组
   sort: {
     ws: { key: 'totalTokens', dir: -1 },
+    day: { key: 'key', dir: -1 }, // 按天视图默认最新一天在最上
     sess: { key: 'totalTokens', dir: -1 },
     model: { key: 'totalTokens', dir: -1 },
   },

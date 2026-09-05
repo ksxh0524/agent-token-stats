@@ -159,7 +159,11 @@ export function aggregate({ sessions, prices = {}, win = null, aliases = {} }) {
     for (const [p, rawModels] of Object.entries(s.providerModelUsage || {})) {
       const pr = bumpRow(provMap, p);
       pr.sessions++;
-      pr.messages += s.messages || 0;
+      // 消息数按该服务商 token 占全会话的比例分摊：多服务商会话不再重复计数
+      const pTop = s.providerUsage?.[p];
+      const pTokens =
+        pTop?.totalTokens || Object.values(rawModels).reduce((a, u) => a + (u.totalTokens || 0), 0);
+      pr.messages += (s.messages || 0) * (pTokens / Math.max(1, s.totalTokens || 0));
       const top = s.providerUsage?.[p];
       if (top) addTo(pr, top);
       for (const [raw, u] of Object.entries(rawModels)) {
@@ -199,7 +203,7 @@ export function enrichSession(s, prices, win) {
       if (!inWindow(d, win)) continue;
       mtokens += u.totalTokens || 0;
       const e = estCost(u, price);
-      est += e;
+      if (!(u.realCost > 0)) est += e; // est 只累计估算部分（实+估=总），供「实/估」角标判混合口径
       real += u.realCost || 0;
       cost += u.realCost > 0 ? u.realCost : e;
     }
@@ -225,6 +229,7 @@ export function aggregateProviderModels({ sessions, prices = {}, win = null, ali
 
   for (const s of sessions) {
     if (!sessionInWindow(s, win)) continue;
+    const sTotal = Math.max(1, s.totalTokens || 0);
     for (const [p, rawModels] of Object.entries(s.providerModelUsage || {})) {
       let g = groups.get(p);
       if (!g) {
@@ -232,8 +237,10 @@ export function aggregateProviderModels({ sessions, prices = {}, win = null, ali
         groups.set(p, g);
       }
       g.sessions++;
-      g.messages += s.messages || 0;
+      // 消息数按该服务商 token 占全会话的比例分摊（与「按提供商」视图同口径，不重复计数）
       const top = s.providerUsage?.[p];
+      const pTokens = top?.totalTokens || Object.values(rawModels).reduce((a, u) => a + (u.totalTokens || 0), 0);
+      g.messages += (s.messages || 0) * (pTokens / sTotal);
       if (top) addTo(g, top);
       for (const [raw, u] of Object.entries(rawModels)) {
         const m = normModel(raw, aliases);
@@ -248,7 +255,8 @@ export function aggregateProviderModels({ sessions, prices = {}, win = null, ali
           g.models.set(raw, mr);
         }
         mr.sessions++;
-        mr.messages += s.messages || 0;
+        // 模型行消息数按该模型 token 占全会话的比例分摊：同一服务商下多模型合计 = 服务商行
+        mr.messages += (s.messages || 0) * ((u.totalTokens || 0) / sTotal);
         addTo(mr, u);
         mr.estCost += useReal ? 0 : e;
         mr.cost += useReal ? u.realCost : e;

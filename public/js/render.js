@@ -1,9 +1,17 @@
 // 渲染层：只读 state，把聚合结果画到 DOM。所有表格排序键都基于富化后的数值字段。
-import { fmt, fmtFull, esc, money } from './format.js';
+import { fmt, fmtFull, esc, money, fmtDateTime, fmtDuration, fmtDay } from './format.js';
 
 export function moneyFmt(state) {
   const rate = state.currency === '¥' ? 1 : state.data?.rates?.[state.currency] || 1;
   return (cny) => money(cny, state.currency, rate);
+}
+
+// 实/估角标：按窗口内「模型×天」单元格的混合口径标注（实+估 = 部分天有真实费用、其余按单价估算）
+function costTag(real, est) {
+  if (real > 0 && est > 0) return '<span class="badge-real" title="窗口内部分天有真实费用、其余按单价估算">实+估</span>';
+  if (real > 0) return '<span class="badge-real" title="花费为数据中记录的真实费用">实</span>';
+  if (est > 0) return '<span class="badge-est" title="窗口内无真实费用，按配置单价估算">估</span>';
+  return '';
 }
 
 function sortRows(rows, sortState) {
@@ -65,7 +73,7 @@ export function renderModelTable(tableEl, rows, sortState, totalAll, mf) {
   tableEl.querySelector('tbody').innerHTML =
     sorted
       .map((m) => {
-        const tag = m.realCost > 0 ? '<span class="badge-real">实</span>' : '<span class="badge-est">估</span>';
+        const tag = costTag(m.realCost, m.estCost);
         return `
       <tr>
         <td class="path" title="${esc(m.key)}">${esc(m.key)}</td>
@@ -84,20 +92,40 @@ export function renderModelTable(tableEl, rows, sortState, totalAll, mf) {
       })
       .join('') || '<tr><td colspan="12" class="empty">当前窗口内无模型用量</td></tr>';
 
-  // 合计行
+  // 合计行：与表头逐列对齐（12 列），每列都给总数
   const t = rows.reduce(
     (acc, m) => {
+      acc.sessions += m.sessions;
+      acc.input += m.input;
+      acc.output += m.output;
+      acc.cacheRead += m.cacheRead;
+      acc.cacheWrite += m.cacheWrite;
+      acc.reasoning += m.reasoning;
+      acc.totalTokens += m.totalTokens;
       acc.realCost += m.realCost;
       acc.estCost += m.estCost;
       acc.cost += m.cost;
       return acc;
     },
-    { realCost: 0, estCost: 0, cost: 0 },
+    { sessions: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 0, realCost: 0, estCost: 0, cost: 0 },
   );
   const foot = tableEl.querySelector('tfoot');
   if (foot) {
     foot.innerHTML = rows.length
-      ? `<tr><td>合计</td><td colspan="7"></td><td class="num">${fmt(totalAll)}</td><td class="num">100%</td><td class="num">${t.realCost > 0 ? mf(t.realCost) : '-'}</td><td class="num">${mf(t.estCost)}</td><td class="num money">${mf(t.cost)}</td></tr>`
+      ? `<tr>
+          <td>合计</td>
+          <td class="num">${t.sessions}</td>
+          <td class="num" title="${fmtFull(t.input)}">${fmt(t.input)}</td>
+          <td class="num" title="${fmtFull(t.output)}">${fmt(t.output)}</td>
+          <td class="num" title="${fmtFull(t.cacheRead)}">${fmt(t.cacheRead)}</td>
+          <td class="num" title="${fmtFull(t.cacheWrite)}">${fmt(t.cacheWrite)}</td>
+          <td class="num" title="${fmtFull(t.reasoning)}">${fmt(t.reasoning)}</td>
+          <td class="num" title="${fmtFull(t.totalTokens)}">${fmt(t.totalTokens)}</td>
+          <td class="num">100%</td>
+          <td class="num">${t.realCost > 0 ? mf(t.realCost) : '-'}</td>
+          <td class="num">${mf(t.estCost)}</td>
+          <td class="num money">${mf(t.cost)}</td>
+        </tr>`
       : '';
   }
 }
@@ -109,12 +137,17 @@ const SESS_BATCH = 150;
 const sessRender = { rows: [], mf: null, cursor: 0 };
 
 function sessRowHtml(r) {
-  const tag = r.real > 0 ? '<span class="badge-real">实</span>' : r.est > 0 ? '<span class="badge-est">估</span>' : '';
+  const tag = costTag(r.real, r.est);
   const arc = r.archived ? '<span class="badge-est" title="源会话已删除，此为本地保留的历史归档">档</span>' : '';
   return `
       <tr>
-        <td title="id: ${esc(r.id)} · ${esc(r.name)}">${esc(r.name)}${arc}</td>
+        <td title="${esc(r.name)}">
+          <div class="sess-name">${esc(r.name)}${arc}</div>
+          <div class="sess-id" title="会话 ID: ${esc(r.id)}">${esc(r.id)}</div>
+        </td>
         <td class="path" title="${esc(r.cwd)}">${esc(r.cwd)}</td>
+        <td class="num" title="${r.startTs ? esc(new Date(r.startTs).toLocaleString('zh-CN')) : ''}">${fmtDateTime(r.startTs)}</td>
+        <td class="num">${fmtDuration(r.durationMs)}</td>
         <td class="num" title="${fmtFull(r.totalTokens)}">${fmt(r.totalTokens)}</td>
         <td class="num">${fmt(r.input)}</td>
         <td class="num">${fmt(r.output)}</td>
@@ -128,29 +161,36 @@ function sessRowHtml(r) {
 
 /** 重置并渲染第一批（renderAll 每次调用；rows 为富化+排序后的数据） */
 export function renderSessionTable(el, enrichedRows, sortState, mf) {
-  const rows = enrichedRows.map((e) => ({
-    name: e.s.name,
-    id: e.s.id,
-    cwd: e.s.cwd,
-    totalTokens: e.wu.totalTokens,
-    input: e.wu.input,
-    output: e.wu.output,
-    cacheRead: e.wu.cacheRead,
-    hitRate: e.hitRate,
-    messages: Math.round((e.s.messages || 0) * e.ratio),
-    cost: e.cost,
-    est: e.est,
-    real: e.real,
-    topModel: e.topModel,
-    archived: !!e.s.archived,
-  }));
+  const rows = enrichedRows.map((e) => {
+    const startTs = e.s.startTs || null;
+    const endTs = e.s.endTs || null;
+    const durMs = startTs && endTs ? new Date(endTs) - new Date(startTs) : 0;
+    return {
+      name: e.s.name,
+      id: e.s.id,
+      cwd: e.s.cwd,
+      startTs,
+      durationMs: Number.isFinite(durMs) && durMs > 0 ? durMs : 0,
+      totalTokens: e.wu.totalTokens,
+      input: e.wu.input,
+      output: e.wu.output,
+      cacheRead: e.wu.cacheRead,
+      hitRate: e.hitRate,
+      messages: Math.round((e.s.messages || 0) * e.ratio),
+      cost: e.cost,
+      est: e.est,
+      real: e.real,
+      topModel: e.topModel,
+      archived: !!e.s.archived,
+    };
+  });
   const sorted = sortRows(rows, sortState);
   sessRender.rows = sorted;
   sessRender.mf = mf;
   sessRender.cursor = 0;
   const tbody = el.querySelector('tbody');
   if (!sorted.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty">当前筛选下无匹配会话</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">当前筛选下无匹配会话</td></tr>';
     sessRender.cursor = 0;
     return;
   }
@@ -183,7 +223,7 @@ export function renderProviderModelTable(tableEl, groups, mf) {
   const numCell = (v, extra = '') =>
     `<td class="num"${extra ? ` title="${fmtFull(v)}"` : ''}>${fmt(v)}</td>`;
   const costCell = (r) => {
-    const tag = r.realCost > 0 ? '<span class="badge-real">实</span>' : r.estCost > 0 ? '<span class="badge-est">估</span>' : '';
+    const tag = costTag(r.realCost, r.estCost);
     return `<td class="num">${r.realCost > 0 ? mf(r.realCost) : '-'}</td><td class="num">${mf(r.estCost)}</td><td class="num money">${mf(r.cost)}${tag}</td>`;
   };
   const parts = [];
@@ -212,22 +252,65 @@ export function renderProviderModelTable(tableEl, groups, mf) {
   if (foot) foot.innerHTML = '';
 }
 
-export function renderBars(el, items, limit, mf) {
-  if (!items.length) {
-    el.innerHTML = '<div class="empty">无数据</div>';
-    return;
+// 「按天用量」表：逐日汇总行 + 全列合计（12 列对齐；会话列合计 = 会话×天）
+export function renderDayTable(tableEl, rows, sortState, mf) {
+  const sorted = sortRows(rows, sortState);
+  tableEl.querySelector('tbody').innerHTML =
+    sorted
+      .map((d) => {
+        const tag = costTag(d.realCost, d.estCost);
+        return `
+      <tr>
+        <td title="${esc(d.key)}">${fmtDay(d.key)}</td>
+        <td class="num">${d.sessions}</td>
+        <td class="num">${fmt(Math.round(d.messages))}</td>
+        <td class="num" title="${fmtFull(d.input)}">${fmt(d.input)}</td>
+        <td class="num" title="${fmtFull(d.output)}">${fmt(d.output)}</td>
+        <td class="num" title="${fmtFull(d.cacheRead)}">${fmt(d.cacheRead)}</td>
+        <td class="num" title="${fmtFull(d.cacheWrite)}">${fmt(d.cacheWrite)}</td>
+        <td class="num" title="${fmtFull(d.reasoning)}">${fmt(d.reasoning)}</td>
+        <td class="num" title="${fmtFull(d.totalTokens)}">${fmt(d.totalTokens)}</td>
+        <td class="num">${d.realCost > 0 ? mf(d.realCost) : '-'}</td>
+        <td class="num">${mf(d.estCost)}</td>
+        <td class="num money">${mf(d.cost)}${tag}</td>
+      </tr>`;
+      })
+      .join('') || '<tr><td colspan="12" class="empty">当前窗口内无按天用量</td></tr>';
+
+  const t = rows.reduce(
+    (acc, d) => {
+      acc.sessions += d.sessions;
+      acc.messages += d.messages;
+      acc.input += d.input;
+      acc.output += d.output;
+      acc.cacheRead += d.cacheRead;
+      acc.cacheWrite += d.cacheWrite;
+      acc.reasoning += d.reasoning;
+      acc.totalTokens += d.totalTokens;
+      acc.realCost += d.realCost;
+      acc.estCost += d.estCost;
+      acc.cost += d.cost;
+      return acc;
+    },
+    { sessions: 0, messages: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 0, realCost: 0, estCost: 0, cost: 0 },
+  );
+  const foot = tableEl.querySelector('tfoot');
+  if (foot) {
+    foot.innerHTML = rows.length
+      ? `<tr>
+          <td>合计</td>
+          <td class="num" title="逐日活跃会话数之和（会话×天，非去重）">${t.sessions}</td>
+          <td class="num">${fmt(Math.round(t.messages))}</td>
+          <td class="num" title="${fmtFull(t.input)}">${fmt(t.input)}</td>
+          <td class="num" title="${fmtFull(t.output)}">${fmt(t.output)}</td>
+          <td class="num" title="${fmtFull(t.cacheRead)}">${fmt(t.cacheRead)}</td>
+          <td class="num" title="${fmtFull(t.cacheWrite)}">${fmt(t.cacheWrite)}</td>
+          <td class="num" title="${fmtFull(t.reasoning)}">${fmt(t.reasoning)}</td>
+          <td class="num" title="${fmtFull(t.totalTokens)}">${fmt(t.totalTokens)}</td>
+          <td class="num">${t.realCost > 0 ? mf(t.realCost) : '-'}</td>
+          <td class="num">${mf(t.estCost)}</td>
+          <td class="num money">${mf(t.cost)}</td>
+        </tr>`
+      : '';
   }
-  const list = items.slice(0, limit);
-  const max = list[0].totalTokens || 1;
-  el.innerHTML = list
-    .map((it) => {
-      const pct = ((it.totalTokens / max) * 100).toFixed(2);
-      const sub = `in ${fmt(it.input)} · out ${fmt(it.output)} · R ${fmt(it.cacheRead)} · <span class="money">${mf(it.cost)}</span>`;
-      return `<div class="bar-row">
-        <div class="bar-label" title="${esc(it.key)}">${esc(it.key)}</div>
-        <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
-        <div class="bar-val">${fmt(it.totalTokens)}<span class="bar-sub">${sub}</span></div>
-      </div>`;
-    })
-    .join('');
 }

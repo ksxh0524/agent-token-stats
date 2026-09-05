@@ -169,3 +169,79 @@ test('aggregateProviderModels：分组、窗口过滤、blended 费用与占比'
   // 排序：prov-A(100) > prov-B(50)
   assert.equal(groups[0].key, 'prov-A');
 });
+
+test('providers 消息数按 token 占比分摊，多服务商会话不重复计数', () => {
+  const s = mkS({
+    messages: 10,
+    totalTokens: 300,
+    dayUsage: { '2026-08-10': { ...emptyAgg(), totalTokens: 300 } },
+    providerUsage: {
+      'prov-A': { ...emptyAgg(), totalTokens: 200 },
+      'prov-B': { ...emptyAgg(), totalTokens: 100 },
+    },
+    providerModelUsage: {
+      'prov-A': { 'm-a': { ...emptyAgg(), totalTokens: 200 } },
+      'prov-B': { 'm-b': { ...emptyAgg(), totalTokens: 100 } },
+    },
+  });
+  const agg = aggregate({ sessions: [s], prices: {}, win: null });
+  const a = agg.providers.find((p) => p.key === 'prov-A');
+  const b = agg.providers.find((p) => p.key === 'prov-B');
+  assert.ok(Math.abs(a.messages - 10 * (200 / 300)) < 1e-9);
+  assert.ok(Math.abs(b.messages - 10 * (100 / 300)) < 1e-9);
+  assert.ok(Math.abs(a.messages + b.messages - 10) < 1e-9); // 分摊后合计 = 会话消息数
+
+  const groups = aggregateProviderModels({ sessions: [s], prices: {}, win: null, aliases: {} });
+  const ga = groups.find((g) => g.key === 'prov-A');
+  const gb = groups.find((g) => g.key === 'prov-B');
+  assert.ok(Math.abs(ga.messages - 10 * (200 / 300)) < 1e-9);
+  assert.ok(Math.abs(gb.messages - 10 * (100 / 300)) < 1e-9);
+  assert.ok(Math.abs(ga.models[0].messages - 10 * (200 / 300)) < 1e-9); // 模型行与所属服务商行一致
+});
+
+test('按天视图：days 行携带花费，逐日合计 = 总花费', () => {
+  const sessions = [
+    mkS({
+      dayUsage: {
+        '2026-08-10': { ...emptyAgg(), input: 1000, totalTokens: 1000, realCost: 5 },
+        '2026-08-11': { ...emptyAgg(), input: 2000, totalTokens: 2000 },
+      },
+      modelDayUsage: {
+        'm-a': {
+          '2026-08-10': { ...emptyAgg(), input: 1000, totalTokens: 1000, realCost: 5 },
+          '2026-08-11': { ...emptyAgg(), input: 2000, totalTokens: 2000 },
+        },
+      },
+    }),
+  ];
+  const agg = aggregate({ sessions, prices: P, win: null });
+  assert.equal(agg.days.length, 2);
+  const daySum = agg.days.reduce((a, d) => a + d.cost, 0);
+  assert.ok(Math.abs(daySum - agg.totals.cost) < 1e-9); // 与总花费口径一致
+  assert.ok(Math.abs(agg.days.reduce((a, d) => a + d.estCost, 0) - agg.totals.estCost) < 1e-9);
+  // 实/估混合：8/10 实、8/11 估
+  const d10 = agg.days.find((d) => d.key === '2026-08-10');
+  const d11 = agg.days.find((d) => d.key === '2026-08-11');
+  assert.ok(d10.realCost > 0 && d10.estCost === 0);
+  assert.ok(d11.realCost === 0 && d11.estCost > 0);
+});
+
+test('enrichSession：est 只累计估算部分（供实/估角标判混合）', () => {
+  const s = mkS({
+    totalTokens: 3000,
+    dayUsage: {
+      '2026-08-10': { ...emptyAgg(), input: 1000, totalTokens: 1000, realCost: 5 },
+      '2026-08-11': { ...emptyAgg(), input: 2000, totalTokens: 2000 },
+    },
+    modelDayUsage: {
+      'm-a': {
+        '2026-08-10': { ...emptyAgg(), input: 1000, totalTokens: 1000, realCost: 5 },
+        '2026-08-11': { ...emptyAgg(), input: 2000, totalTokens: 2000 },
+      },
+    },
+  });
+  const e = enrichSession(s, P, null);
+  assert.ok(Math.abs(e.real - 5) < 1e-9);
+  assert.ok(Math.abs(e.est - 0.002) < 1e-9); // 只有 8/11 参与估算，8/10 的估算值不计入
+  assert.ok(e.real > 0 && e.est > 0); // 混合口径 → 实+估
+});
