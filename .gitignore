@@ -5,3 +5,4 @@ prices.json
 .DS_Store
 *.log
 .cache
+.workbuddy/
