@@ -16,14 +16,14 @@ import type { ScanStore, UnitRow } from '../store.ts';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { addUsage, aliasHash, emptyUsage, normalizeModelName, num, shanghaiDate, str, type RawUsage } from '../util.ts';
+import { addUsage, aliasHash, emptyUsage, localDate, normalizeModelName, num, str, type RawUsage } from '../util.ts';
 
 export function resolveOpencodeDb(): string {
   return process.env.OPENCODE_DB || join(homedir(), '.local', 'share', 'opencode', 'opencode.db');
 }
 
 // 解析口径版本：SQL / 字段解释逻辑变更时 +1
-const OPENCODE_PARSER_VERSION = 1;
+const OPENCODE_PARSER_VERSION = 4;
 
 const MSG_SQL = `
 SELECT m.session_id            AS sid,
@@ -42,7 +42,11 @@ WHERE json_extract(m.data,'$.role') = 'assistant'
   AND json_extract(m.data,'$.tokens') IS NOT NULL
 ORDER BY m.session_id, m.time_created`;
 
-const SESSION_SQL = `SELECT id, directory, title FROM session`;
+// 时间边界以 session 表为准：time_created / time_updated 是 opencode 自己维护的
+// 会话首末时刻，覆盖所有消息（含无 token 的 user / tool 消息）。只用带 token 的
+// assistant 消息定界会把开始算晚、结束算早（实测平均偏 0.5 分钟），纯提问会话
+// 甚至完全没有时间。
+const SESSION_SQL = `SELECT id, directory, title, time_created, time_updated FROM session`;
 
 type MsgRow = {
   sid: unknown;
@@ -59,13 +63,23 @@ type MsgRow = {
 };
 
 function rowToRawUsage(r: MsgRow): RawUsage {
+  const input = num(r.input);
+  const output = num(r.output);
+  const reasoning = num(r.reasoning);
+  const cacheRead = num(r.cacheRead);
+  const cacheWrite = num(r.cacheWrite);
   return {
-    input: num(r.input),
-    output: num(r.output),
-    reasoning: num(r.reasoning),
-    cacheRead: num(r.cacheRead),
-    cacheWrite: num(r.cacheWrite),
-    totalTokens: num(r.totalTokens),
+    input,
+    output,
+    reasoning,
+    cacheRead,
+    cacheWrite,
+    // opencode 官方口径（实测 session 表聚合验证）：tokens_output 与 tokens_reasoning
+    // 分列存储、互不包含（buzzai/glm 有大量 reasoning>output 的消息），总量必须加上
+    // reasoning —— 漏加会把推理 token 整块从总 token 里丢掉（douling 会话少算 14.7 万）。
+    // pi 源相反（reasoning ⊆ output 且自带 totalTokens=sum4），由 addUsage 的 tt 优先，
+    // 不受此处影响。
+    totalTokens: input + output + reasoning + cacheRead + cacheWrite,
     cost: { total: num(r.cost) },
   };
 }
@@ -90,10 +104,10 @@ function openDb(fp: string): DatabaseSync {
 }
 
 function buildSessions(db: DatabaseSync, aliases: Record<string, string>): Map<string, SessionAgg> {
-  const meta = new Map<string, { directory: string; title: string }>();
+  const meta = new Map<string, { directory: string; title: string; tc: number; tu: number }>();
   for (const s of db.prepare(SESSION_SQL).all() as Record<string, unknown>[]) {
     const id = str(s.id);
-    if (id) meta.set(id, { directory: str(s.directory), title: str(s.title) });
+    if (id) meta.set(id, { directory: str(s.directory), title: str(s.title), tc: num(s.time_created), tu: num(s.time_updated) });
   }
 
   const acc = new Map<
@@ -139,7 +153,7 @@ function buildSessions(db: DatabaseSync, aliases: Record<string, string>): Map<s
       a.startMs = Math.min(a.startMs, ms);
       a.endMs = Math.max(a.endMs, ms);
     }
-    const date = shanghaiDate(ms > 0 ? new Date(ms).toISOString() : undefined);
+    const date = localDate(ms > 0 ? new Date(ms).toISOString() : undefined);
     if (date) addUsage((a.dayUsage[date] ||= emptyUsage()), u);
 
     const model = normalizeModelName(str(raw.model) || 'unknown', aliases);
@@ -169,13 +183,18 @@ function buildSessions(db: DatabaseSync, aliases: Record<string, string>): Map<s
   const sessions = new Map<string, SessionAgg>();
   for (const [sid, a] of acc) {
     const info = meta.get(sid);
+    // 时间边界 = 消息首末 与 session.time_created/time_updated 取并集
+    const tc = info?.tc ?? 0;
+    const tu = info?.tu ?? 0;
+    const startMs = a.startMs > 0 ? Math.min(a.startMs, tc > 0 ? tc : a.startMs) : tc;
+    const endMs = a.endMs > 0 ? Math.max(a.endMs, tu > 0 ? tu : a.endMs) : tu;
     sessions.set(sid, {
       id: sid,
       source: 'opencode',
       cwd: info?.directory || '(unknown)',
       name: (info?.title || sid.slice(0, 8)).slice(0, 90).replace(/\s+/g, ' ').trim() || sid.slice(0, 8),
-      startTs: a.startMs > 0 ? new Date(a.startMs).toISOString() : null,
-      endTs: a.endMs > 0 ? new Date(a.endMs).toISOString() : null,
+      startTs: startMs > 0 ? new Date(startMs).toISOString() : null,
+      endTs: endMs > 0 ? new Date(endMs).toISOString() : null,
       messages: a.messages,
       ...a.usage,
       dayUsage: a.dayUsage,

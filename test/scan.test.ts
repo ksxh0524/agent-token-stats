@@ -50,7 +50,7 @@ test('scan()：聚合、归一、坏行统计、totalTokens 兜底', async () =>
   assert.equal(a.totalTokens, 175 + 50 + 15 + 1400 + 60);
   assert.ok(Math.abs(a.realCost - 0.93) < 1e-9); // 0.5 + 0.42(subagent 裸数字 cost) + 0.01
 
-  // 按天（Asia/Shanghai）
+  // 按天（npm test 固定 TZ=Asia/Shanghai）
   assert.equal(a.dayUsage['2026-08-20'].totalTokens, 175);
   assert.equal(a.dayUsage['2026-08-21'].totalTokens, 50); // 兜底 30+20
   assert.equal(a.dayUsage['2026-08-22'].totalTokens, 15);

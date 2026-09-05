@@ -22,14 +22,14 @@ import {
   isEmptyUsage,
   mergeUsage,
   normalizeModelName,
-  shanghaiDate,
+  localDate,
   type RawUsage,
 } from '../util.ts';
 
 export { normalizeModelName } from '../util.ts';
 
 // 解析口径版本：对每行的解释逻辑变更时 +1，让库里旧口径的聚合整体作废
-export const PARSER_VERSION = 2;
+export const PARSER_VERSION = 4;
 
 const CONCURRENCY = 8;
 
@@ -163,11 +163,14 @@ function parseChunk(
     const line = raw.trim();
     if (!line) continue;
 
-    // 行级预筛：带 usage 的行必含字面量 "usage"；assistant 行含 "role":"assistant"
-    // （保消息计数与时间戳精确）。只跳过占大头的纯用户输入文本行。
+    // 行级预筛：所有事件行都带 "timestamp"（时间边界必须精确到最后一行），
+    // 所以实际上等于全量 JSON.parse；保留判断只是为跳过极少数坏行/空行。
+    // 不能为省 CPU 用正则抽 timestamp —— 工具输出文本里可能嵌套带
+    // "timestamp" 的 JSON 片段，正则会把嵌套值当事件时间，时间边界反而失真。
     const isCandidate =
       line.includes('"usage"') ||
       line.includes('"assistant"') ||
+      line.includes('"timestamp"') ||
       (!ctx.sawSessionMeta && line.includes('"session"')) ||
       (ctx.needName && line.includes('"user"'));
     if (!isCandidate) continue;
@@ -217,7 +220,7 @@ function parseChunk(
 
     for (const h of collectUsage(e)) {
       addUsage(agg, h.u);
-      const date = shanghaiDate(ts);
+      const date = localDate(ts);
       if (date) addUsage((agg.dayUsage[date] ||= emptyUsage()), h.u);
 
       // 模型 / 提供商维度：优先用事件自带的模型；
@@ -307,6 +310,23 @@ interface PiUnit {
   size: number;
   mtime: number;
   ino: string;
+}
+
+/** 游标字段全部相同 ⇒ 文件字节没动、解析上下文没动、口径没动 ⇒ 聚合必然相同。
+ *  据此跳过无变化行的落库：否则每轮扫描都全量 upsert 几百行 + data_revision 白涨，
+ *  前端「数据没变只回空载荷」的增量轮询短路就永远命中不了。
+ *  agg 本身不比（stringify 几百份聚合太贵），由游标字段等价性保证。 */
+function rowUnchanged(a: UnitRow, b: UnitRow): boolean {
+  return (
+    a.sid === b.sid &&
+    a.size === b.size &&
+    a.mtime === b.mtime &&
+    a.inode === b.inode &&
+    a.offset === b.offset &&
+    a.pv === b.pv &&
+    a.ah === b.ah &&
+    a.ctx === b.ctx
+  );
 }
 
 async function listUnits(sessionsDir: string): Promise<{ units: PiUnit[]; error?: string }> {
@@ -460,6 +480,9 @@ export const piAdapter: SourceAdapter = {
         try {
           const res = await processUnit(unit, existing.get(unit.fp) ?? null, ah, aliases);
           if (!res) continue;
+          // 无变化的行不写库（不涨 data_revision、不产生 WAL），只有真变化才落库
+          const prev = existing.get(unit.fp);
+          if (prev && rowUnchanged(prev, res.row)) continue;
           changedRows.push(res.row);
           skippedLines += res.skipped;
           if (res.fullRescan) fullRescans++;

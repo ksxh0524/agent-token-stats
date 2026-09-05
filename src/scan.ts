@@ -15,7 +15,7 @@
 // 通用口径（各源适配器必须遵守，测试盯着这些断言）：
 //  - 工作区 = 会话元数据里的 cwd 字段（真实项目路径）
 //  - 会话名 = 首条 user 消息的文本摘要
-//  - 天 = 按 Asia/Shanghai 时区把 timestamp 归到日期
+//  - 天 = 按运行环境本地时区把 timestamp 归到日期
 //  - 模型名归一：去组织前缀（org/model）、小写、冒号转连字符；modelAliases 映射表优先
 //  - 费用 = provider 记录的真实费用（usage.cost.total），按 会话/天/模型/提供商 累计
 import type { ScanResult, SourceAdapter, SourceStat } from './types.ts';

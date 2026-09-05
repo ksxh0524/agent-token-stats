@@ -60,12 +60,12 @@ export function isEmptyUsage(u: RawUsage | null | undefined): boolean {
   );
 }
 
-// ISO 时间 → Asia/Shanghai 的 YYYY-MM-DD
-export function shanghaiDate(iso: string | undefined): string | null {
+// ISO 时间 → 系统本地时区的 YYYY-MM-DD（读电脑时区设置，不再写死 Asia/Shanghai）
+export function localDate(iso: string | undefined): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }); // YYYY-MM-DD
+  return d.toLocaleDateString('en-CA'); // 无 timeZone 参数 = 本地时区, YYYY-MM-DD
 }
 
 // 稳定短哈希（FNV-1a 32bit）：用于把别名配置并入缓存键

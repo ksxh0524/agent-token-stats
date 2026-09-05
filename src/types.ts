@@ -48,7 +48,7 @@ export interface SessionAgg extends Usage {
   endTs: string | null;
   messages: number;                         // assistant 消息数
   archived?: boolean;                       // 源数据已删除，此聚合仅存于本地库（归档）
-  dayUsage: Record<string, Usage>;          // 按天（Asia/Shanghai）拆分
+  dayUsage: Record<string, Usage>;          // 按天（运行环境本地时区）拆分
   modelUsage: Record<string, Usage>;        // 按归一化模型名拆分（全会话）
   modelDayUsage: Record<string, Record<string, Usage>>; // 模型 × 天，用于窗口内精确算花费
   providerUsage: Record<string, Usage>;     // 按提供商拆分（全会话）

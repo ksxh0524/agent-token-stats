@@ -7,22 +7,27 @@ import { join } from 'node:path';
 import { opencodeAdapter } from '../src/sources/opencode.ts';
 import { ScanStore } from '../src/store.ts';
 
-// 构造最小可用的 opencode 数据库（只含本扫描器关心的列）
+// 构造最小可用的 opencode 数据库（只含本扫描器关心的列；
+// time_created/time_updated 对齐真实 schema 的 NOT NULL 约定）
 function makeFixtureDb(fp: string): void {
   const db = new DatabaseSync(fp);
   db.exec(`
-    CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT);
+    CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
     CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
   `);
-  db.prepare(`INSERT INTO session (id, directory, title) VALUES (?,?,?)`).run(
+  db.prepare(`INSERT INTO session (id, directory, title, time_created, time_updated) VALUES (?,?,?,?,?)`).run(
     'ses_aaa111',
     '/tmp/projA',
     'fix auth bug',
+    Date.UTC(2026, 7, 20, 2, 0, 0), // 与首条消息同时刻
+    Date.UTC(2026, 7, 20, 16, 1, 0), // 与末条消息同时刻
   );
-  db.prepare(`INSERT INTO session (id, directory, title) VALUES (?,?,?)`).run(
+  db.prepare(`INSERT INTO session (id, directory, title, time_created, time_updated) VALUES (?,?,?,?,?)`).run(
     'ses_bbb222',
     '/tmp/projB',
     'empty session',
+    Date.UTC(2026, 7, 20, 1, 0, 0),
+    Date.UTC(2026, 7, 20, 1, 0, 0),
   );
 
   const msg = (id: string, sid: string, ms: number, data: Record<string, unknown>) =>
@@ -87,7 +92,7 @@ test('opencode：聚合、按天、模型/提供商维度、source 标记', asyn
   assert.equal(a.totalTokens, 196);
   assert.equal(a.realCost, 0.5);
 
-  // Asia/Shanghai 按天：d1 → 08-20，d2 → 08-21
+  // 按天（npm test 固定 TZ=Asia/Shanghai）：d1 → 08-20，d2 → 08-21（跨天用例）
   assert.deepEqual(Object.keys(a.dayUsage).sort(), ['2026-08-20', '2026-08-21']);
   assert.equal(a.dayUsage['2026-08-20'].input, 100);
   assert.equal(a.dayUsage['2026-08-21'].output, 8);
