@@ -27,3 +27,13 @@ start.command / stop.command 跑完自动关闭当前 Terminal 标签页（ATS_K
 别名一变 `aliasHash` 就变 → 下一次 `/api/data` 全量重解析，`data_revision` 跟着走，前端无需额外通知。
 汇率：界面只选显示币种，比例由服务端每天从免费源（`src/rates.ts`，`open.er-api.com`）拉一次写进配置；**`POST /api/prices` 忽略前端回传的 `rates`，一律用 `prev.rates`**。`RATES_SYNC=off` / `RATES_INTERVAL_MS` / `RATES_DELAY_MS` 可调。注意汇率一变，所有自动来源的价会按新汇率重算一遍（手填 / pi 的不动）。
 `POST /api/prices` 带空 `prices` 会被拒（409），要清空必须显式 `?allowEmpty=1`——防页面数据没就绪时把整份配置抹了。
+
+内存与启动（2026-09-27 实测，别回退）：
+- 堆上限在 `manager.sh` 的 `NODE_FLAGS`（默认 `--max-old-space-size=192`）和 `package.json` 的 start/dev 里。V8 默认无上限，全量重扫 2GB 会话时 old space 虚涨到 150MB+、RSS 稳态 300MB+；加它后稳态 212MB。实测 96/128/192 三档差别不大，192 给活数据（≈50MB）留了 ~4 倍余量。要调就调 `NODE_FLAGS`，别在 JS 里做。
+- pi 源**必须分块读**：整文件读入 = 1×Buffer + 1×UTF-16 字符串同时驻留，单个 65MB jsonl 让 RSS +187MB，8 路并发峰值 590–679MB —— 这就是「启动后 400 多 MB」的根因。见 `src/sources/pi.ts` 的 `scanLines`。
+  ⚠️ 别把 `scanLines` 改成「每块 `Buffer.concat` 一个新 buffer」：macOS malloc arena 不把内存还给系统，实测 8000 次 256KB 分配把 RSS 顶到 1GB 且**稳定不降**（比整读还差一倍）。正确做法是缓冲区按 worker 复用、新字节读进帧头、只在换行处切割。
+- 改 `scanLines` 必须跑 `test/pi-chunked.test.ts`：它锁死「跨块多字节字符不被解码成 U+FFFD」「末行半行不计入、补齐后只计一次」「增量结果逐字段 == 全量结果」三条。
+- 扫描库 `units.ctx` 占 12.9MB、`agg` 2.8MB（pi 2315 行），每轮 scan 全量 `JSON.parse` 一次 → RSS +70MB，是 warm scan 的主要内存项。想再降先做「ctx 懒加载 + 按会话增量」，别动聚合口径。
+- opencode 源是 warm scan 的性能大头（~800ms/轮）：游标是 db(-wal) 的 `mtime:size` 签名，opencode 在跑签名就一直变，于是每轮全量重跑 `MSG_SQL`（27k 行、`data` 列 130MB）；且每轮 upsert 408 行会 bump `data_revision`，让前端 `?rev=` 增量轮询永远命中不了空载荷、每次传满 2.19MB。要修得**先验证** opencode 追加消息时 `session.time_updated` 一定更新（本仓库尚未验证），再做按 session 增量。
+- `src/sources/opencode.ts` 里「opencode.db 只有 3MB 级别」的注释已过时：实际 **6.5GB**（`part` 表 119722 行）。改该源前先 `du -h ~/.local/share/opencode/opencode.db`。
+- 真实规模（复核基线，2026-09-27）：pi 1381 个 jsonl / 2.19GB / 最大单文件 65MB；store.db 里 pi 2315 行（其中 934 行是源文件已删的归档，属设计承诺，不是 bug）；全量重扫 ≈11s，warm scan ≈100ms（pi）+ 800ms（opencode）。

@@ -10,11 +10,17 @@
 //
 // 归档承诺：pi 清理掉 jsonl 后，units 表里这行（含聚合）原样保留，
 // 输出时打上 archived 标记继续展示。
-import { open, readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import type { SessionAgg, SourceAdapter, SourceScanOutcome, SourceStat, Usage } from '../types.ts';
-import type { ScanStore, UnitRow } from '../store.ts';
+import { open, readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import type {
+  SessionAgg,
+  SourceAdapter,
+  SourceScanOutcome,
+  SourceStat,
+  Usage,
+} from "../types.ts";
+import type { ScanStore, UnitRow } from "../store.ts";
 import {
   addUsage,
   aliasHash,
@@ -24,9 +30,9 @@ import {
   normalizeModelName,
   localDate,
   type RawUsage,
-} from '../util.ts';
+} from "../util.ts";
 
-export { normalizeModelName } from '../util.ts';
+export { normalizeModelName } from "../util.ts";
 
 // 解析口径版本：对每行的解释逻辑变更时 +1，让库里旧口径的聚合整体作废
 export const PARSER_VERSION = 4;
@@ -34,7 +40,7 @@ export const PARSER_VERSION = 4;
 const CONCURRENCY = 8;
 
 function pickStr(v: unknown): string {
-  return typeof v === 'string' && v ? v : '';
+  return typeof v === "string" && v ? v : "";
 }
 
 // 一条事件里的用量可能有好几处，每处各自带模型归属：
@@ -49,7 +55,7 @@ interface UsageHit {
 
 function collectUsage(e: Record<string, unknown>): UsageHit[] {
   const hits: UsageHit[] = [];
-  const push = (u: RawUsage | undefined, model = '', provider = '') => {
+  const push = (u: RawUsage | undefined, model = "", provider = "") => {
     if (!u || isEmptyUsage(u)) return;
     hits.push({ u, model, provider });
   };
@@ -66,13 +72,17 @@ function collectUsage(e: Record<string, unknown>): UsageHit[] {
     );
 
     // subagent：results 里每个子 agent 一条用量，模型只在 result 上，不在 message 上
-    if (msg.toolName === 'subagent') {
+    if (msg.toolName === "subagent") {
       const results = d?.results;
       if (Array.isArray(results)) {
         for (const r of results) {
-          if (!r || typeof r !== 'object') continue;
+          if (!r || typeof r !== "object") continue;
           const rec = r as Record<string, unknown>;
-          push(rec.usage as RawUsage | undefined, pickStr(rec.model), pickStr(rec.provider));
+          push(
+            rec.usage as RawUsage | undefined,
+            pickStr(rec.model),
+            pickStr(rec.provider),
+          );
         }
       }
     }
@@ -81,20 +91,26 @@ function collectUsage(e: Record<string, unknown>): UsageHit[] {
 }
 
 function firstText(content: unknown): string {
-  if (typeof content === 'string') return content;
+  if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     for (const b of content) {
-      if (b && typeof b === 'object' && (b as Record<string, unknown>).type === 'text') {
+      if (
+        b &&
+        typeof b === "object" &&
+        (b as Record<string, unknown>).type === "text"
+      ) {
         const t = (b as Record<string, unknown>).text;
-        if (typeof t === 'string') return t;
+        if (typeof t === "string") return t;
       }
     }
   }
-  return '';
+  return "";
 }
 
 export function resolveSessionsDir(): string {
-  return process.env.PI_SESSIONS_DIR || join(homedir(), '.pi', 'agent', 'sessions');
+  return (
+    process.env.PI_SESSIONS_DIR || join(homedir(), ".pi", "agent", "sessions")
+  );
 }
 
 // ---------- 解析器上下文：增量解析的「断点状态」 ----------
@@ -116,16 +132,16 @@ interface PiCtx {
 
 function newCtx(defaultId: string): PiCtx {
   return {
-    cwd: '',
+    cwd: "",
     sessionId: defaultId,
     sawSessionMeta: false,
-    name: '',
+    name: "",
     needName: true,
     startTs: null,
     endTs: null,
     messages: 0,
-    lastModel: '',
-    lastProvider: '',
+    lastModel: "",
+    lastProvider: "",
     providerByModel: [],
   };
 }
@@ -133,8 +149,8 @@ function newCtx(defaultId: string): PiCtx {
 function buildAgg(ctx: PiCtx, usage: Usage): SessionAgg {
   return {
     id: ctx.sessionId,
-    source: 'pi',
-    cwd: ctx.cwd || '(unknown)',
+    source: "pi",
+    cwd: ctx.cwd || "(unknown)",
     name: (ctx.name || ctx.sessionId.slice(0, 8)).slice(0, 90),
     startTs: ctx.startTs,
     endTs: ctx.endTs,
@@ -182,27 +198,30 @@ function parseChunk(
       skipped++;
       continue;
     }
-    const ts = typeof e.timestamp === 'string' ? e.timestamp : undefined;
+    const ts = typeof e.timestamp === "string" ? e.timestamp : undefined;
     if (ts) {
       if (ctx.startTs === null) ctx.startTs = ts;
       ctx.endTs = ts;
     }
-    if (e.type === 'session') {
-      if (typeof e.cwd === 'string' && e.cwd) ctx.cwd = e.cwd;
-      if (typeof e.id === 'string' && e.id) ctx.sessionId = e.id;
+    if (e.type === "session") {
+      if (typeof e.cwd === "string" && e.cwd) ctx.cwd = e.cwd;
+      if (typeof e.id === "string" && e.id) ctx.sessionId = e.id;
       ctx.sawSessionMeta = true;
     }
-    const m = e.type === 'message' ? (e.message as Record<string, unknown> | undefined) : undefined;
+    const m =
+      e.type === "message"
+        ? (e.message as Record<string, unknown> | undefined)
+        : undefined;
     if (m) {
       const role = m.role;
-      if (role === 'user' && ctx.needName) {
-        const t = firstText(m.content).replace(/\s+/g, ' ').trim();
+      if (role === "user" && ctx.needName) {
+        const t = firstText(m.content).replace(/\s+/g, " ").trim();
         if (t) {
           ctx.name = t;
           ctx.needName = false;
         }
       }
-      if (role === 'assistant') {
+      if (role === "assistant") {
         ctx.messages++;
         // 记住会话当前模型：compaction 之类不带模型的事件按它归因
         const rm = pickStr(m.model);
@@ -226,16 +245,25 @@ function parseChunk(
       // 模型 / 提供商维度：优先用事件自带的模型；
       // compaction 这类没带模型的事件归因到会话内最近一次 assistant 实际用的模型。
       // subagent result 只给模型不给提供商，用同模型已知提供商兜底。
-      const rawModel = h.model || ctx.lastModel || 'unknown';
+      const rawModel = h.model || ctx.lastModel || "unknown";
       const provider =
         h.provider ||
-        (h.model ? ctx.providerByModel.find(([k]) => k === h.model)?.[1] : ctx.lastProvider) ||
-        'unknown';
+        (h.model
+          ? ctx.providerByModel.find(([k]) => k === h.model)?.[1]
+          : ctx.lastProvider) ||
+        "unknown";
       const model = normalizeModelName(rawModel, aliases);
       addUsage((agg.modelUsage[model] ||= emptyUsage()), h.u);
-      if (date) addUsage(((agg.modelDayUsage[model] ||= {})[date] ||= emptyUsage()), h.u);
+      if (date)
+        addUsage(
+          ((agg.modelDayUsage[model] ||= {})[date] ||= emptyUsage()),
+          h.u,
+        );
       addUsage((agg.providerUsage[provider] ||= emptyUsage()), h.u);
-      addUsage(((agg.providerModelUsage[provider] ||= {})[rawModel] ||= emptyUsage()), h.u);
+      addUsage(
+        ((agg.providerModelUsage[provider] ||= {})[rawModel] ||= emptyUsage()),
+        h.u,
+      );
     }
   }
   return skipped;
@@ -245,7 +273,8 @@ function parseChunk(
 function mergeAgg(base: SessionAgg, delta: SessionAgg, ctx: PiCtx): void {
   mergeUsage(base, delta);
   const merge1 = (t: Record<string, Usage>, s: Record<string, Usage>) => {
-    for (const [k, u] of Object.entries(s)) mergeUsage((t[k] ||= emptyUsage()), u);
+    for (const [k, u] of Object.entries(s))
+      mergeUsage((t[k] ||= emptyUsage()), u);
   };
   const merge2 = (
     t: Record<string, Record<string, Usage>>,
@@ -260,8 +289,10 @@ function mergeAgg(base: SessionAgg, delta: SessionAgg, ctx: PiCtx): void {
   merge2(base.providerModelUsage, delta.providerModelUsage);
 
   base.messages = ctx.messages;
-  if (ctx.startTs && (!base.startTs || ctx.startTs < base.startTs)) base.startTs = ctx.startTs;
-  if (ctx.endTs && (!base.endTs || ctx.endTs > base.endTs)) base.endTs = ctx.endTs;
+  if (ctx.startTs && (!base.startTs || ctx.startTs < base.startTs))
+    base.startTs = ctx.startTs;
+  if (ctx.endTs && (!base.endTs || ctx.endTs > base.endTs))
+    base.endTs = ctx.endTs;
 }
 
 /** 纯聚合合并（输出阶段：同一会话 id 的多个文件贡献相加） */
@@ -269,7 +300,8 @@ function addAggInto(base: SessionAgg, delta: SessionAgg): void {
   mergeUsage(base, delta);
   base.messages += delta.messages;
   const merge1 = (t: Record<string, Usage>, s: Record<string, Usage>) => {
-    for (const [k, u] of Object.entries(s)) mergeUsage((t[k] ||= emptyUsage()), u);
+    for (const [k, u] of Object.entries(s))
+      mergeUsage((t[k] ||= emptyUsage()), u);
   };
   const merge2 = (
     t: Record<string, Record<string, Usage>>,
@@ -283,22 +315,72 @@ function addAggInto(base: SessionAgg, delta: SessionAgg): void {
   merge2(base.modelDayUsage, delta.modelDayUsage);
   merge2(base.providerModelUsage, delta.providerModelUsage);
 
-  if (delta.startTs && (!base.startTs || delta.startTs < base.startTs)) base.startTs = delta.startTs;
-  if (delta.endTs && (!base.endTs || delta.endTs > base.endTs)) base.endTs = delta.endTs;
+  if (delta.startTs && (!base.startTs || delta.startTs < base.startTs))
+    base.startTs = delta.startTs;
+  if (delta.endTs && (!base.endTs || delta.endTs > base.endTs))
+    base.endTs = delta.endTs;
   // 名字 / cwd：base 为空或还是占位时才采用 delta 的
-  if ((!base.name || base.name === base.id.slice(0, 8)) && delta.name) base.name = delta.name;
-  if (base.cwd === '(unknown)' && delta.cwd) base.cwd = delta.cwd;
+  if ((!base.name || base.name === base.id.slice(0, 8)) && delta.name)
+    base.name = delta.name;
+  if (base.cwd === "(unknown)" && delta.cwd) base.cwd = delta.cwd;
 }
 
-/** 从文件的 start 字节读到 end 字节 */
-async function readRange(fp: string, start: number, end: number): Promise<Buffer> {
+// 读取块大小。整文件读入会把「1×Buffer + 1×UTF-16 字符串」同时压在堆上：
+// 实测单个 65MB jsonl 让 RSS 增加 187MB（65MB Buffer + 115MB 堆字符串），
+// 8 路并发解析时峰值 590MB —— 这就是「启动后 400 多 MB」的来源。
+const READ_CHUNK = 512 * 1024;
+
+/**
+ * 分块扫 [start, end) 的完整行，逐块交给 onLines。
+ * 返回「已消费字节数」（= 最后一个换行符之后的位置）作为新的 offset，语义与整读版一致：
+ * 末行半截（含跨块的多字节字符）留在缓冲区头部，下一轮从该字节继续。
+ *
+ * 实现约束（实测踩出来的，别改成"每块 Buffer.concat"）：
+ * 缓冲区必须【每 worker 复用一份】，新字节直接读进上一轮半行的后面，只在换行处切割。
+ * 如果每块都 Buffer.concat / Buffer.alloc 一个新的 ~256KB buffer，macOS 的 malloc
+ * arena 不会把内存还给系统 —— 实测 8000 次分配把 RSS 顶到 1GB 且稳定不降
+ * （比原来的整读还差一倍）。现在全程只有「每 worker 一个缓冲区」这一种大分配。
+ *
+ * 只在换行符处切割，所以 toString 的边界永远落在合法字符边界上，不需要 StringDecoder；
+ * 半行是整段保留再拼的，跨块的多字节字符不会被解码成 U+FFFD。
+ */
+async function scanLines(
+  fp: string,
+  start: number,
+  end: number,
+  onLines: (lines: string[]) => void,
+): Promise<number> {
   const len = end - start;
-  if (len <= 0) return Buffer.alloc(0);
-  const fh = await open(fp, 'r');
+  if (len <= 0) return 0;
+  const fh = await open(fp, "r");
   try {
-    const buf = Buffer.allocUnsafe(len);
-    const { bytesRead } = await fh.read(buf, 0, len, start);
-    return bytesRead === len ? buf : buf.subarray(0, bytesRead);
+    let buf = Buffer.allocUnsafe(Math.min(READ_CHUNK, len));
+    let base = start; // buf[0] 对应的文件偏移
+    let filled = 0; // buf[0, filled) 是「可能还不完整」的数据（含上一轮留下的半行）
+    let consumed = 0; // 已确认消费的完整行字节数（相对 start）
+    while (base + filled < end) {
+      let want = Math.min(buf.length - filled, end - base - filled);
+      if (want <= 0) {
+        // 单行比缓冲区还长：扩容（极少发生，只影响这一路 worker）
+        const bigger = Buffer.allocUnsafe(buf.length * 2);
+        buf.copy(bigger, 0, 0, filled);
+        buf = bigger;
+        continue;
+      }
+      const { bytesRead } = await fh.read(buf, filled, want, base + filled);
+      if (!bytesRead) break;
+      filled += bytesRead;
+      const lastNl = buf.lastIndexOf(0x0a, filled - 1);
+      if (lastNl === -1) continue; // 整块都是半行，继续读
+      consumed = base - start + lastNl + 1;
+      onLines(buf.toString("utf8", 0, lastNl + 1).split("\n"));
+      // 半行搬到缓冲区头部（memmove，长度 = 一个没写完的行），偏移推进到换行符之后
+      const rest = filled - (lastNl + 1);
+      if (rest > 0) buf.copy(buf, 0, lastNl + 1, filled);
+      base += lastNl + 1;
+      filled = rest;
+    }
+    return consumed;
   } finally {
     await fh.close();
   }
@@ -329,7 +411,9 @@ function rowUnchanged(a: UnitRow, b: UnitRow): boolean {
   );
 }
 
-async function listUnits(sessionsDir: string): Promise<{ units: PiUnit[]; error?: string }> {
+async function listUnits(
+  sessionsDir: string,
+): Promise<{ units: PiUnit[]; error?: string }> {
   let dirs: string[];
   try {
     const entries = await readdir(sessionsDir, { withFileTypes: true });
@@ -346,14 +430,24 @@ async function listUnits(sessionsDir: string): Promise<{ units: PiUnit[]; error?
       continue;
     }
     for (const fn of names) {
-      if (!fn.endsWith('.jsonl')) continue;
-      const defaultId = fn.includes('_')
-        ? fn.split('_').slice(1).join('_').replace(/\.jsonl$/, '')
-        : fn.replace(/\.jsonl$/, '');
+      if (!fn.endsWith(".jsonl")) continue;
+      const defaultId = fn.includes("_")
+        ? fn
+            .split("_")
+            .slice(1)
+            .join("_")
+            .replace(/\.jsonl$/, "")
+        : fn.replace(/\.jsonl$/, "");
       const fp = join(sessionsDir, dir, fn);
       try {
         const st = await stat(fp);
-        units.push({ fp, defaultId, size: st.size, mtime: st.mtimeMs, ino: String(st.ino) });
+        units.push({
+          fp,
+          defaultId,
+          size: st.size,
+          mtime: st.mtimeMs,
+          ino: String(st.ino),
+        });
       } catch {
         /* stat 失败的文件本轮跳过 */
       }
@@ -390,35 +484,36 @@ async function processUnit(
   const baseAgg = canIncremental ? state!.agg : null;
 
   const startOffset = canIncremental ? state!.offset : 0;
-  const buf = await readRange(unit.fp, startOffset, unit.size);
-  // 只处理完整行：最后一段没换行符的是 pi 正在写入的半行，留给下一轮
-  // （真实 pi 的 jsonl 每条事件都以 \n 结尾，所以这只发生在写入瞬间）
-  const lastNl = buf.lastIndexOf(0x0a);
-  const consumed = lastNl === -1 ? 0 : lastNl + 1;
-  const text = consumed > 0 ? buf.subarray(0, consumed).toString('utf8') : '';
-  const lines = text ? text.split('\n') : [];
 
   let agg: SessionAgg;
   let skipped = 0;
+  let consumed = 0;
 
   if (ctx && baseAgg) {
+    const incrementalCtx = ctx; // 收窄给回调用（回调内的 ctx 类型会退回可空）
     agg = structuredClone(baseAgg);
-    if (lines.length) {
-      const delta = buildAgg(ctx, emptyUsage());
-      skipped = parseChunk(lines, ctx, delta, aliases);
-      mergeAgg(agg, delta, ctx);
-    }
+    // 增量：把新字节的聚合成 delta，最后并进本文件自己的累计聚合
+    const delta = buildAgg(incrementalCtx, emptyUsage());
+    let sawLines = false;
+    consumed = await scanLines(unit.fp, startOffset, unit.size, (lines) => {
+      sawLines = true;
+      skipped += parseChunk(lines, incrementalCtx, delta, aliases);
+    });
+    if (sawLines) mergeAgg(agg, delta, incrementalCtx);
   } else {
     // 全量：口径变了 / 文件被换过 / 上下文或历史聚合缺失 / 第一次见到的文件
-    ctx = newCtx(unit.defaultId);
-    agg = buildAgg(ctx, emptyUsage());
-    skipped = parseChunk(lines, ctx, agg, aliases);
+    const fullCtx = newCtx(unit.defaultId);
+    ctx = fullCtx;
+    agg = buildAgg(fullCtx, emptyUsage());
+    consumed = await scanLines(unit.fp, 0, unit.size, (lines) => {
+      skipped += parseChunk(lines, fullCtx, agg, aliases);
+    });
   }
 
   // 收尾：会话名 / cwd / id / 时间边界一律以 ctx 最终状态为准
   agg.id = ctx.sessionId;
   agg.name = (ctx.name || ctx.sessionId.slice(0, 8)).slice(0, 90);
-  agg.cwd = ctx.cwd || '(unknown)';
+  agg.cwd = ctx.cwd || "(unknown)";
   agg.messages = ctx.messages;
   agg.startTs = ctx.startTs;
   agg.endTs = ctx.endTs;
@@ -426,7 +521,7 @@ async function processUnit(
 
   return {
     row: {
-      source: 'pi',
+      source: "pi",
       unit: unit.fp,
       size: unit.size,
       mtime: unit.mtime,
@@ -445,12 +540,15 @@ async function processUnit(
 }
 
 export const piAdapter: SourceAdapter = {
-  kind: 'pi',
+  kind: "pi",
 
-  async scan(store: ScanStore, aliases: Record<string, string> = {}): Promise<SourceScanOutcome> {
+  async scan(
+    store: ScanStore,
+    aliases: Record<string, string> = {},
+  ): Promise<SourceScanOutcome> {
     const sessionsDir = resolveSessionsDir();
     const { units, error } = await listUnits(sessionsDir);
-    const existing = store.getUnits('pi'); // 含归档行（源里已删的文件）
+    const existing = store.getUnits("pi"); // 含归档行（源里已删的文件）
 
     if (error && !units.length) {
       // 会话目录读不了（被移动/权限）：归档数据照常输出
@@ -458,7 +556,12 @@ export const piAdapter: SourceAdapter = {
         sessions: groupBySession(existing),
         scannedUnits: 0,
         skippedLines: 0,
-        stat: { location: sessionsDir, enabled: false, sessions: store.countSessions('pi'), error },
+        stat: {
+          location: sessionsDir,
+          enabled: false,
+          sessions: store.countSessions("pi"),
+          error,
+        },
       };
     }
 
@@ -474,27 +577,35 @@ export const piAdapter: SourceAdapter = {
 
     // worker 池并发解析
     let idx = 0;
-    const workers = Array.from({ length: Math.min(CONCURRENCY, units.length || 1) }, async () => {
-      while (idx < units.length) {
-        const unit = units[idx++];
-        try {
-          const res = await processUnit(unit, existing.get(unit.fp) ?? null, ah, aliases);
-          if (!res) continue;
-          // 无变化的行不写库（不涨 data_revision、不产生 WAL），只有真变化才落库
-          const prev = existing.get(unit.fp);
-          if (prev && rowUnchanged(prev, res.row)) continue;
-          changedRows.push(res.row);
-          skippedLines += res.skipped;
-          if (res.fullRescan) fullRescans++;
-          if (++sinceYield >= 40) {
-            sinceYield = 0;
-            await yieldLoop(); // 让出事件循环，扫描期间服务仍可响应
+    const workers = Array.from(
+      { length: Math.min(CONCURRENCY, units.length || 1) },
+      async () => {
+        while (idx < units.length) {
+          const unit = units[idx++];
+          try {
+            const res = await processUnit(
+              unit,
+              existing.get(unit.fp) ?? null,
+              ah,
+              aliases,
+            );
+            if (!res) continue;
+            // 无变化的行不写库（不涨 data_revision、不产生 WAL），只有真变化才落库
+            const prev = existing.get(unit.fp);
+            if (prev && rowUnchanged(prev, res.row)) continue;
+            changedRows.push(res.row);
+            skippedLines += res.skipped;
+            if (res.fullRescan) fullRescans++;
+            if (++sinceYield >= 40) {
+              sinceYield = 0;
+              await yieldLoop(); // 让出事件循环，扫描期间服务仍可响应
+            }
+          } catch {
+            /* 单文件失败不拖垮整体 */
           }
-        } catch {
-          /* 单文件失败不拖垮整体 */
         }
-      }
-    });
+      },
+    );
     await Promise.all(workers);
 
     // 只写本轮有变化的行；源里消失的行不动（它们就是归档）
@@ -515,14 +626,14 @@ export const piAdapter: SourceAdapter = {
         row.archived = target;
       }
     }
-    if (archiveChanges.length) store.setArchived('pi', archiveChanges);
+    if (archiveChanges.length) store.setArchived("pi", archiveChanges);
 
     const sessions = groupBySession(merged);
 
     const stat: SourceStat = {
       location: sessionsDir,
       enabled: true,
-      sessions: store.countSessions('pi'),
+      sessions: store.countSessions("pi"),
     };
     return {
       sessions,
@@ -543,7 +654,10 @@ function groupBySession(rows: Map<string, UnitRow>): SessionAgg[] {
       addAggInto(b.agg, row.agg);
       b.archived = b.archived && !!row.agg.archived;
     } else {
-      byId.set(row.agg.id, { agg: structuredClone(row.agg), archived: !!row.agg.archived });
+      byId.set(row.agg.id, {
+        agg: structuredClone(row.agg),
+        archived: !!row.agg.archived,
+      });
     }
   }
   const out: SessionAgg[] = [];
@@ -551,6 +665,6 @@ function groupBySession(rows: Map<string, UnitRow>): SessionAgg[] {
     if (archived) agg.archived = true;
     out.push(agg);
   }
-  out.sort((a, b) => (b.startTs || '').localeCompare(a.startTs || ''));
+  out.sort((a, b) => (b.startTs || "").localeCompare(a.startTs || ""));
   return out;
 }

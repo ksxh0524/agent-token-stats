@@ -8,8 +8,8 @@
     "node": ">=22.6"
   },
   "scripts": {
-    "start": "node --experimental-strip-types src/server.ts",
-    "dev": "node --experimental-strip-types --watch src/server.ts",
+    "start": "node --max-old-space-size=192 --experimental-strip-types src/server.ts",
+    "dev": "node --max-old-space-size=192 --experimental-strip-types --watch src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "TZ=Asia/Shanghai node --test \"test/*.test.js\" \"test/*.test.ts\"",
     "fmt": "prettier --write \"src/**/*.ts\" \"public/js/*.js\" \"test/**/*\""
