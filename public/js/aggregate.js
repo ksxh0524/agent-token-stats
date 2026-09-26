@@ -200,6 +200,11 @@ export function aggregate({ sessions, prices = {}, win = null, aliases = {} }) {
   for (const r of provMap.values())
     r.pct =
       totals.totalTokens > 0 ? (r.totalTokens / totals.totalTokens) * 100 : 0;
+  // 按天视图的缓存命中率：命中 / (输入(未命中) + 命中)，口径与会话视图 enrichSession 一致
+  for (const r of dayMap.values()) {
+    const denom = r.input + r.cacheRead;
+    r.hitRate = denom > 0 ? (r.cacheRead / denom) * 100 : 0;
+  }
 
   const toArr = (m) =>
     [...m.values()].sort((a, b) => b.totalTokens - a.totalTokens);

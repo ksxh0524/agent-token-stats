@@ -316,7 +316,8 @@ test("按天视图：days 行携带花费，逐日合计 = 总花费", () => {
         "2026-08-10": {
           ...emptyAgg(),
           input: 1000,
-          totalTokens: 1000,
+          cacheRead: 3000,
+          totalTokens: 4000,
           realCost: 5,
         },
         "2026-08-11": { ...emptyAgg(), input: 2000, totalTokens: 2000 },
@@ -326,7 +327,8 @@ test("按天视图：days 行携带花费，逐日合计 = 总花费", () => {
           "2026-08-10": {
             ...emptyAgg(),
             input: 1000,
-            totalTokens: 1000,
+            cacheRead: 3000,
+            totalTokens: 4000,
             realCost: 5,
           },
           "2026-08-11": { ...emptyAgg(), input: 2000, totalTokens: 2000 },
@@ -347,6 +349,9 @@ test("按天视图：days 行携带花费，逐日合计 = 总花费", () => {
   const d11 = agg.days.find((d) => d.key === "2026-08-11");
   assert.ok(d10.realCost > 0 && d10.estCost === 0);
   assert.ok(d11.realCost === 0 && d11.estCost > 0);
+  // 缓存命中率：命中 / (输入(未命中) + 命中)
+  assert.equal(d10.hitRate, 75); // 3000 / (1000 + 3000)
+  assert.equal(d11.hitRate, 0); // 无命中 → 0
 });
 
 test("enrichSession：est 只累计估算部分（供实/估角标判混合）", () => {

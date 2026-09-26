@@ -300,7 +300,7 @@ export function renderProviderModelTable(
   if (foot) foot.innerHTML = "";
 }
 
-// 「按天用量」表：逐日汇总行 + 全列合计（12 列对齐；会话列合计 = 会话×天）
+// 「按天用量」表：逐日汇总行 + 全列合计（13 列对齐；会话列合计 = 会话×天）
 export function renderDayTable(tableEl, rows, sortState, mf) {
   const sorted = sortRows(rows, sortState);
   tableEl.querySelector("tbody").innerHTML =
@@ -315,6 +315,7 @@ export function renderDayTable(tableEl, rows, sortState, mf) {
         <td class="num" title="${fmtFull(d.input)}">${fmt(d.input)}</td>
         <td class="num" title="${fmtFull(d.output)}">${fmt(d.output)}</td>
         <td class="num" title="${fmtFull(d.cacheRead)}">${fmt(d.cacheRead)}</td>
+        <td class="num" title="缓存命中 / (输入(未命中) + 缓存命中)">${d.hitRate.toFixed(1)}%</td>
         <td class="num" title="${fmtFull(d.cacheWrite)}">${fmt(d.cacheWrite)}</td>
         <td class="num" title="${fmtFull(d.reasoning)}">${fmt(d.reasoning)}</td>
         <td class="num" title="${fmtFull(d.totalTokens)}">${fmt(d.totalTokens)}</td>
@@ -324,7 +325,7 @@ export function renderDayTable(tableEl, rows, sortState, mf) {
       </tr>`;
       })
       .join("") ||
-    '<tr><td colspan="12" class="empty">当前窗口内无按天用量</td></tr>';
+    '<tr><td colspan="13" class="empty">当前窗口内无按天用量</td></tr>';
 
   const t = rows.reduce(
     (acc, d) => {
@@ -357,6 +358,10 @@ export function renderDayTable(tableEl, rows, sortState, mf) {
   );
   const foot = tableEl.querySelector("tfoot");
   if (foot) {
+    const tHit =
+      t.input + t.cacheRead > 0
+        ? (t.cacheRead / (t.input + t.cacheRead)) * 100
+        : 0;
     foot.innerHTML = rows.length
       ? `<tr>
           <td>合计</td>
@@ -365,6 +370,7 @@ export function renderDayTable(tableEl, rows, sortState, mf) {
           <td class="num" title="${fmtFull(t.input)}">${fmt(t.input)}</td>
           <td class="num" title="${fmtFull(t.output)}">${fmt(t.output)}</td>
           <td class="num" title="${fmtFull(t.cacheRead)}">${fmt(t.cacheRead)}</td>
+          <td class="num">${tHit.toFixed(1)}%</td>
           <td class="num" title="${fmtFull(t.cacheWrite)}">${fmt(t.cacheWrite)}</td>
           <td class="num" title="${fmtFull(t.reasoning)}">${fmt(t.reasoning)}</td>
           <td class="num" title="${fmtFull(t.totalTokens)}">${fmt(t.totalTokens)}</td>
