@@ -9,7 +9,15 @@
 //  - providers 维度数据源未按天拆分，采用「窗口内活跃会话的全量数据」，UI 需标注口径
 
 export function emptyAgg() {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 0, realCost: 0 };
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    reasoning: 0,
+    totalTokens: 0,
+    realCost: 0,
+  };
 }
 
 const AGG_KEYS = Object.keys(emptyAgg());
@@ -32,7 +40,13 @@ export function zeroPrice() {
 // 单价：每百万 token 的 ¥ 价
 export function estCost(u, price) {
   const p = price || zeroPrice();
-  return (u.input * p.input + u.output * p.output + u.cacheRead * p.cacheRead + u.cacheWrite * p.cacheWrite) / 1e6;
+  return (
+    (u.input * p.input +
+      u.output * p.output +
+      u.cacheRead * p.cacheRead +
+      u.cacheWrite * p.cacheWrite) /
+    1e6
+  );
 }
 
 // 真实优先，估算兜底（模型×天粒度）
@@ -41,15 +55,16 @@ export function blended(u, price) {
 }
 
 function normModel(name, aliases = {}) {
-  let n = String(name || '').trim();
-  if (!n) return 'unknown';
+  let n = String(name || "").trim();
+  if (!n) return "unknown";
   if (aliases[n]) return aliases[n];
-  const i = n.indexOf('/');
+  const i = n.indexOf("/");
   if (i > 0 && i < n.length - 1) {
     const tail = n.slice(i + 1).toLowerCase();
-    if (!['free', 'latest', 'default', 'chat', 'pro'].includes(tail)) n = n.slice(i + 1);
+    if (!["free", "latest", "default", "chat", "pro"].includes(tail))
+      n = n.slice(i + 1);
   }
-  return n.replace(/:/g, '-').trim().toLowerCase() || 'unknown';
+  return n.replace(/:/g, "-").trim().toLowerCase() || "unknown";
 }
 
 // 会话在窗口内的逐日用量汇总（token 类；不含花费）
@@ -64,7 +79,8 @@ export function sessionWindowUsage(s, win) {
 // 会话是否在窗口内有用量
 export function sessionInWindow(s, win) {
   if (!win || (!win.from && !win.to)) return true;
-  for (const d of Object.keys(s.dayUsage || {})) if (inWindow(d, win)) return true;
+  for (const d of Object.keys(s.dayUsage || {}))
+    if (inWindow(d, win)) return true;
   return false;
 }
 
@@ -85,7 +101,7 @@ function bumpRow(map, key) {
  * @returns { totals, workspaces, models, days, providers }
  */
 export function aggregate({ sessions, prices = {}, win = null, aliases = {} }) {
-  const totals = { ...row('TOTAL') };
+  const totals = { ...row("TOTAL") };
   const wsMap = new Map();
   const modelMap = new Map();
   const dayMap = new Map();
@@ -162,8 +178,10 @@ export function aggregate({ sessions, prices = {}, win = null, aliases = {} }) {
       // 消息数按该服务商 token 占全会话的比例分摊：多服务商会话不再重复计数
       const pTop = s.providerUsage?.[p];
       const pTokens =
-        pTop?.totalTokens || Object.values(rawModels).reduce((a, u) => a + (u.totalTokens || 0), 0);
-      pr.messages += (s.messages || 0) * (pTokens / Math.max(1, s.totalTokens || 0));
+        pTop?.totalTokens ||
+        Object.values(rawModels).reduce((a, u) => a + (u.totalTokens || 0), 0);
+      pr.messages +=
+        (s.messages || 0) * (pTokens / Math.max(1, s.totalTokens || 0));
       const top = s.providerUsage?.[p];
       if (top) addTo(pr, top);
       for (const [raw, u] of Object.entries(rawModels)) {
@@ -172,12 +190,19 @@ export function aggregate({ sessions, prices = {}, win = null, aliases = {} }) {
     }
   }
 
-  for (const r of modelMap.values()) r.pct = totals.totalTokens > 0 ? (r.totalTokens / totals.totalTokens) * 100 : 0;
+  for (const r of modelMap.values())
+    r.pct =
+      totals.totalTokens > 0 ? (r.totalTokens / totals.totalTokens) * 100 : 0;
   totals.pct = 100;
-  for (const r of wsMap.values()) r.pct = totals.totalTokens > 0 ? (r.totalTokens / totals.totalTokens) * 100 : 0;
-  for (const r of provMap.values()) r.pct = totals.totalTokens > 0 ? (r.totalTokens / totals.totalTokens) * 100 : 0;
+  for (const r of wsMap.values())
+    r.pct =
+      totals.totalTokens > 0 ? (r.totalTokens / totals.totalTokens) * 100 : 0;
+  for (const r of provMap.values())
+    r.pct =
+      totals.totalTokens > 0 ? (r.totalTokens / totals.totalTokens) * 100 : 0;
 
-  const toArr = (m) => [...m.values()].sort((a, b) => b.totalTokens - a.totalTokens);
+  const toArr = (m) =>
+    [...m.values()].sort((a, b) => b.totalTokens - a.totalTokens);
   return {
     totals,
     workspaces: toArr(wsMap),
@@ -194,7 +219,7 @@ export function enrichSession(s, prices, win) {
   let cost = 0;
   let est = 0;
   let real = 0;
-  let topModel = '-';
+  let topModel = "-";
   let max = -1;
   for (const [m, days] of Object.entries(s.modelDayUsage || {})) {
     const price = prices[m];
@@ -223,7 +248,12 @@ export function enrichSession(s, prices, win) {
  * 每个 provider 行 = 窗口内活跃会话对该 provider 的全量用量；models[] = 该 provider 下各原始模型的用量。
  * @returns [{ key, sessions, messages, ...usage, estCost, cost, pct, models: [{key, sessions, ...usage, estCost, cost, pct}] }]
  */
-export function aggregateProviderModels({ sessions, prices = {}, win = null, aliases = {} }) {
+export function aggregateProviderModels({
+  sessions,
+  prices = {},
+  win = null,
+  aliases = {},
+}) {
   const groups = new Map(); // provider -> { row, models: Map }
   let grandTotal = 0;
 
@@ -233,13 +263,23 @@ export function aggregateProviderModels({ sessions, prices = {}, win = null, ali
     for (const [p, rawModels] of Object.entries(s.providerModelUsage || {})) {
       let g = groups.get(p);
       if (!g) {
-        g = { key: p, sessions: 0, messages: 0, ...emptyAgg(), estCost: 0, cost: 0, models: new Map() };
+        g = {
+          key: p,
+          sessions: 0,
+          messages: 0,
+          ...emptyAgg(),
+          estCost: 0,
+          cost: 0,
+          models: new Map(),
+        };
         groups.set(p, g);
       }
       g.sessions++;
       // 消息数按该服务商 token 占全会话的比例分摊（与「按提供商」视图同口径，不重复计数）
       const top = s.providerUsage?.[p];
-      const pTokens = top?.totalTokens || Object.values(rawModels).reduce((a, u) => a + (u.totalTokens || 0), 0);
+      const pTokens =
+        top?.totalTokens ||
+        Object.values(rawModels).reduce((a, u) => a + (u.totalTokens || 0), 0);
       g.messages += (s.messages || 0) * (pTokens / sTotal);
       if (top) addTo(g, top);
       for (const [raw, u] of Object.entries(rawModels)) {
@@ -251,7 +291,15 @@ export function aggregateProviderModels({ sessions, prices = {}, win = null, ali
         g.cost += useReal ? u.realCost : e;
         let mr = g.models.get(raw);
         if (!mr) {
-          mr = { key: m, raw, sessions: 0, messages: 0, ...emptyAgg(), estCost: 0, cost: 0 };
+          mr = {
+            key: m,
+            raw,
+            sessions: 0,
+            messages: 0,
+            ...emptyAgg(),
+            estCost: 0,
+            cost: 0,
+          };
           g.models.set(raw, mr);
         }
         mr.sessions++;
@@ -266,13 +314,16 @@ export function aggregateProviderModels({ sessions, prices = {}, win = null, ali
 
   const out = [...groups.values()];
   for (const g of out) {
-    g.models = [...g.models.values()].sort((a, b) => b.totalTokens - a.totalTokens);
+    g.models = [...g.models.values()].sort(
+      (a, b) => b.totalTokens - a.totalTokens,
+    );
     grandTotal += g.totalTokens;
   }
   out.sort((a, b) => b.totalTokens - a.totalTokens);
   for (const g of out) {
     g.pct = grandTotal > 0 ? (g.totalTokens / grandTotal) * 100 : 0;
-    for (const m of g.models) m.pct = grandTotal > 0 ? (m.totalTokens / grandTotal) * 100 : 0;
+    for (const m of g.models)
+      m.pct = grandTotal > 0 ? (m.totalTokens / grandTotal) * 100 : 0;
   }
   return out;
 }

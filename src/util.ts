@@ -87,6 +87,42 @@ export function aliasHash(aliases: Record<string, string>): string {
 // 归一化中视为「泛词」的末段：这类名字不承载模型信息，保留全名避免歧义碰撞
 const GENERIC_TAIL = new Set(['free', 'latest', 'default', 'chat', 'pro']);
 
+// ---------- 变体名路由 ----------
+// provider 经常给同一个模型追加后缀：日期戳（deepseek-v4-pro-0713 / -20260731）、
+// 预览标记（-preview / -exp / -beta）、思考模式（-thinking）、版本号（-v2）、
+// 上下文窗口（-1m）、强度档（-high）……这些后缀不改变模型身份，
+// 但会让同一个模型在库里裂成多行，而且各自都拿不到价。
+//
+// 明确**不含** -free / -pro / -flash / -max / -mini 这类：免费与收费、
+// 不同档位是不同口径，价格不一样，绝不能自动合并。
+const VARIANT_SUFFIX =
+  /-(?:\d{2,8}|\d+[km]|v\d+(?:\.\d+)*|thinking|nothinking|reasoning|preview|experimental|exp|beta|alpha|rc|latest|stable|instruct|high|medium|low)$/;
+
+/** 一次最多剥几层后缀（deepseek-v4-pro-free-0731-preview → 3 层就到基名了） */
+export const MAX_VARIANT_STRIPS = 3;
+
+/** 剥掉一层「变体噪音后缀」；剥不动（本来就是基名）返回 '' */
+export function stripVariantSuffix(name: string): string {
+  const next = (name || '').replace(VARIANT_SUFFIX, '');
+  return next === name ? '' : next;
+}
+
+/** 变体名 → 已知模型名路由：`deepseek-v4-pro-0713` → `deepseek-v4-pro`。
+ *  从右往左一层层剥，**第一个命中 known 的就返回**（保留最长的名字 = 最贴近的基名）；
+ *  剥到底都没命中返回 ''（调用方按「识别不出来」处理，不要瞎猜）。 */
+export function routeModelName(raw: string, known: Iterable<string>): string {
+  const set = known instanceof Set ? (known as Set<string>) : new Set(known);
+  let cur = (raw || '').trim().toLowerCase();
+  if (!cur) return '';
+  for (let i = 0; i < MAX_VARIANT_STRIPS; i++) {
+    const next = stripVariantSuffix(cur);
+    if (!next) return '';
+    if (set.has(next)) return next;
+    cur = next;
+  }
+  return '';
+}
+
 // 模型名归一：映射表优先；否则去 org/ 前缀、冒号转连字符、小写。
 // '-free' 等后缀保留 —— 免费/收费是不同口径，必须分开计价。
 export function normalizeModelName(raw: string, aliases: Record<string, string> = {}): string {

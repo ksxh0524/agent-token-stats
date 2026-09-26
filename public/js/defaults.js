@@ -1,18 +1,7 @@
-// 官方默认单价（每百万 token，¥ 口径；美元价按 7.2 折算）
-const USD2CNY = 7.2;
-const usd = (n) => n * USD2CNY;
-
-export const DEFAULTS = {
-  'gpt-5.6-terra': { input: usd(2.0), output: usd(12.0), cacheRead: usd(0.2), cacheWrite: usd(2.5) },
-  'gpt-5.6-sol': { input: usd(5.0), output: usd(30.0), cacheRead: usd(0.5), cacheWrite: usd(6.25) },
-  'gpt-5.6-luna': { input: usd(0.2), output: usd(1.2), cacheRead: usd(0.02), cacheWrite: usd(0.25) },
-  'deepseek-v4-flash': { input: 1, output: 2, cacheRead: 0.02, cacheWrite: 0 },
-  'deepseek-v4-pro': { input: 2, output: 4, cacheRead: 0.04, cacheWrite: 0 },
-  'glm-5.2': { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  'grok-4.5': { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  'ark-code-latest': { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-};
-
+// 单价工具。历史上这个文件里还有一份硬编码的 DEFAULTS「官方默认价」（8 个模型、其中 3 个是 0），
+// 是 models.dev 同步还没做通年代（prices-sync 读错字段，见 AGENTS.md）的兜底；
+// 它按覆盖语义写入，会把用户手填的价冲掉，2026-09-12 连按钮一起删除。
+// 现在价格的唯一来源：同步（pi 配置优先 → models.dev 目录）＋ 界面手填。
 export function zeroPrice() {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 }

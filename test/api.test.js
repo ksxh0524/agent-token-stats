@@ -102,7 +102,8 @@ test('POST /api/prices：非法值清洗 + 原子写盘', async () => {
   assert.equal(r.status, 200);
   // 磁盘上的文件必须是合法 JSON（原子写不产生半截文件）
   const disk = JSON.parse(readFileSync(pricesFile, 'utf8'));
-  assert.equal(disk.rates['$'], 7.3);
+  // 汇率由服务端每日自动拉取（src/rates.ts），界面回传的值一律忽略
+  assert.equal(disk.rates['$'], 7.2);
   assert.equal(disk.prices.m1.input, 0); // 负数清零
   assert.equal(disk.prices.m1.output, 0); // 非数清零
   assert.equal(disk.prices.m1.cacheRead, 2);

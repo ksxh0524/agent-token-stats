@@ -12,8 +12,10 @@ export function getData(rev) {
   return fetchJSON('/api/data' + (rev ? `?rev=${encodeURIComponent(rev)}` : ''));
 }
 
-export function saveConfig(cfg) {
-  return fetchJSON('/api/prices', {
+// allowEmpty：只有「清空」按钮才允许把 config 里的 prices 清空，
+// 其余保存路径服务端会拒绝空配置（页面数据未就绪时点保存不该把整份配置抹了）
+export function saveConfig(cfg, { allowEmpty = false } = {}) {
+  return fetchJSON('/api/prices' + (allowEmpty ? '?allowEmpty=1' : ''), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cfg),

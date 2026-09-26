@@ -63,12 +63,18 @@ export interface ModelPrice {
   cacheWrite: number;
 }
 
+// 价格来源。manual = 用户在界面手填（含内置默认价），永不自动覆盖；
+// pi = 来自 pi 配置的中转站真实价，同样视为手工；models.dev / github = 自动同步填入，可被更好来源纠正。
+export type PriceSource = 'manual' | 'pi' | 'models.dev' | 'github';
+
 // prices.json 的结构（含扩展配置），也是 /api/prices 的载荷
 export interface PriceConfig {
   currency: string;                      // 单价币种符号，固定 '¥'
   rates: Record<string, number>;         // 显示用汇率：1 该币种 = N ¥（如 $: 7.2）
   prices: Record<string, ModelPrice>;    // key 为归一化后的模型名
   modelAliases: Record<string, string>;  // 模型名映射表：原始名 → 归一名
+  priceSources?: Record<string, PriceSource>; // 每个模型价格的来源，决定自动同步能不能改它
+  // 注意字段名不能叫 sources：ScanResult 里 sources 是数据源统计（pi / opencode ...），ApiData 是两者的交叉类型
 }
 
 // 单个数据源的扫描概况（给前端 meta 行与来源筛选用）

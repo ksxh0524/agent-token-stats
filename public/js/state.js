@@ -14,6 +14,7 @@ export const state = {
   timer: null,
   currency: '¥', // 仅影响显示
   modelView: 'flat', // 模型明细视图：flat = 仅模型 | provider = 按服务商分组
+  collapsedProviders: [], // 按服务商视图里被收起（只留合计行）的 provider key
   sort: {
     ws: { key: 'totalTokens', dir: -1 },
     day: { key: 'key', dir: -1 }, // 按天视图默认最新一天在最上
@@ -33,6 +34,8 @@ export function loadPrefs() {
     if (p.currency) state.currency = p.currency;
     if (typeof p.auto === 'boolean') state.auto = p.auto;
     if (p.modelView === 'flat' || p.modelView === 'provider') state.modelView = p.modelView;
+    if (Array.isArray(p.collapsedProviders))
+      state.collapsedProviders = p.collapsedProviders.filter((k) => typeof k === 'string' && k);
     // 时间窗口不持久化：每次打开都按「今天」重算近 3 天
   } catch {
     /* 忽略坏数据 */
@@ -49,6 +52,7 @@ export function savePrefs() {
         currency: state.currency,
         auto: state.auto,
         modelView: state.modelView,
+        collapsedProviders: state.collapsedProviders,
       }),
     );
   } catch {
