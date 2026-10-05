@@ -35,7 +35,7 @@ import {
 export { normalizeModelName } from "../util.ts";
 
 // 解析口径版本：对每行的解释逻辑变更时 +1，让库里旧口径的聚合整体作废
-export const PARSER_VERSION = 4;
+export const PARSER_VERSION = 5;
 
 const CONCURRENCY = 8;
 
@@ -200,8 +200,10 @@ function parseChunk(
     }
     const ts = typeof e.timestamp === "string" ? e.timestamp : undefined;
     if (ts) {
-      if (ctx.startTs === null) ctx.startTs = ts;
-      ctx.endTs = ts;
+      // 必须取 min/max，不能「首个当 start、末个当 end」：jsonl 里的事件时间戳
+      // 并非保证单调递增（实测有会话倒挂 9.5 秒），按首末赋值会让 startTs > endTs。
+      if (ctx.startTs === null || ts < ctx.startTs) ctx.startTs = ts;
+      if (ctx.endTs === null || ts > ctx.endTs) ctx.endTs = ts;
     }
     if (e.type === "session") {
       if (typeof e.cwd === "string" && e.cwd) ctx.cwd = e.cwd;
