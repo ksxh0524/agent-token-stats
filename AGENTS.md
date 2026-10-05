@@ -47,9 +47,12 @@ start.command / stop.command 跑完自动关闭当前 Terminal 标签页（ATS_K
   - 字段差异：`role`（JSON 内）→ 独立 `type` 列；`$.modelID` / `$.providerID` → `$.model.id` / `$.model.providerID`。**variant 是 `$.model.variant` 的独立字段、不拼进 id**，所以 modelUsage 的键跨迁移期不变。
   - ⚠️ **v2 的过滤条件必须带 `'compaction'`**：压缩摘要本身是一次真实计费的 LLM 调用（实测 8 条 compaction 消息带 tokens：4896 input / 18787 output / 3.07M cacheRead）。只认 `'assistant'` 会把这块从总量里整块漏掉（老表里只有 assistant 带 token，所以这是迁移新引入的坑）。其余 type（user/system/synthetic/idle/agent-switched/model-switched）实测一律无 token。
   - `session_v2` 有冗余 `tokens_*` / `cost` 汇总列，但和 `session_message` 逐条求和对不上（250.1M vs 243.4M input），且拿不到按天/按模型拆分 → 一律以 `session_message` 为准。
-  - v2 是老表的**严格超集**（老表 787 个 id 全部存在于 session_v2），所以不必合并两套。
-  - 已知上游瑕疵：迁移给 20 个老会话各丢 1 条 assistant 消息（`session_v2` 自己的汇总列仍算着它），合计 -6.4M token；换来的是 191 个新会话 +3.07B token 和 2 个会话的尾部补全 +139M。别为了「对齐老汇总列」去补——v2 才是活表。
-  - `OPENCODE_PARSER_VERSION` = 6。
+  - v2 是老表的**严格超集**：老表那 787 个会话一个都没丢，v2 只是没写新会话。
+  - ⚠️ **迁移丢的消息能按 id 去重补回来，别当成永久丢失**。两套表共用同一套 message id（`msg_<hex><hex>`），实测有 33 条 assistant 消息 v2 没有但老表还在（合计 6,775,483 token），用 `... AND NOT EXISTS (SELECT 1 FROM session_message v WHERE v.id = m.id)` 精确补齐即可（`legacyReconcileSql()`）。补回来之后与 `session_v2` 自带汇总列逐字段一致的会话从 1031 涨到 1049。老表已冻结（最后一条消息 2026-09-29 16:38:36），这是一次性历史对账；**增量路径也必须补**（限定在正在重建的会话内），否则会话拿到新消息后总量反而变小。
+  - 补完仍剩 30 个会话对不上（合计 105,447 token，0.0008%，12 个是近 6 小时内的在途会话）。这些消息在 `session_message` 和老表里**都不存在**，只有 `session_v2` 的汇总列还记着 —— 属于 opencode 侧不可恢复的部分，别再花时间找。
+  - 老库没有 `message` 表时要跳过对账（纯 v2 库），用 `hasTable(db,'message')` 判断，否则 SQL 抛错会让整个源变成 enabled=false。
+  - `OPENCODE_PARSER_VERSION` = 7。
+- ⚠️ **别把「代码没读到」当成「数据没了」**。2026-10-05 我一度断言「迁移后 6 天的数据补不回来了」，被用户当场质疑（「会话不是一直在本地吗」）—— 实际上 v2 是老表的严格超集，那 6 天的会话（191 个 / +3.07B token）在第一次改成读 v2 时就全部回来了；随后连「迁移丢掉」的 33 条消息也按 id 去重补了回来。**下结论说数据不可恢复之前，先去源库把两张表都查一遍、确认那个 id 真的不存在。**
 - pi 的会话时间边界必须取 min/max，**不能「首个 timestamp 当 start、末个当 end」**：jsonl 事件时间戳不保证单调递增（实测有会话倒挂 9.5 秒），按首末赋值会产出 `startTs > endTs`。`PARSER_VERSION` = 5。
 - pi 的 `totalTokens` 用源自报值（`addUsage` 里 `tt` 优先），所以它等于 `input+output+cacheRead+cacheWrite`（reasoning ⊆ output），不是五项和——这跟 opencode 相反，别拿一个口径去校验两个源。
 - `opencode.db` 实际 **26GB**（2026-10-05 实测，`part` 表 250300 行）。改该源前先 `du -h ~/.local/share/opencode/opencode.db`；别再信文件里「3MB 级别」的旧注释（已改成 26GB）。
