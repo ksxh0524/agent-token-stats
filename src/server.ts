@@ -290,7 +290,11 @@ async function serveStatic(res: ServerResponse, pathname: string): Promise<void>
     const type = STATIC_TYPES[fp.slice(fp.lastIndexOf('.'))] || 'application/octet-stream';
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
     res.end(buf);
-  } catch {
+  } catch (err) {
+    // 不要把错误吞掉：500 的真正原因（EPERM / EMFILE / ENOENT…）必须落日志，
+    // 否则前端只看到「文件未找到」，排查时完全瞎猜（2026-09-27 踩过）。
+    const e = err as NodeJS.ErrnoException;
+    console.error(`[static] 读取失败 ${fp} → ${e.code ?? ''} ${e.message}`);
     res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('文件未找到');
   }
