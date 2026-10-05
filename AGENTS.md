@@ -34,6 +34,23 @@ start.command / stop.command 跑完自动关闭当前 Terminal 标签页（ATS_K
   ⚠️ 别把 `scanLines` 改成「每块 `Buffer.concat` 一个新 buffer」：macOS malloc arena 不把内存还给系统，实测 8000 次 256KB 分配把 RSS 顶到 1GB 且**稳定不降**（比整读还差一倍）。正确做法是缓冲区按 worker 复用、新字节读进帧头、只在换行处切割。
 - 改 `scanLines` 必须跑 `test/pi-chunked.test.ts`：它锁死「跨块多字节字符不被解码成 U+FFFD」「末行半行不计入、补齐后只计一次」「增量结果逐字段 == 全量结果」三条。
 - 扫描库 `units.ctx` 占 12.9MB、`agg` 2.8MB（pi 2315 行），每轮 scan 全量 `JSON.parse` 一次 → RSS +70MB，是 warm scan 的主要内存项。想再降先做「ctx 懒加载 + 按会话增量」，别动聚合口径。
-- opencode 源是 warm scan 的性能大头（~800ms/轮）：游标是 db(-wal) 的 `mtime:size` 签名，opencode 在跑签名就一直变，于是每轮全量重跑 `MSG_SQL`（27k 行、`data` 列 130MB）；且每轮 upsert 408 行会 bump `data_revision`，让前端 `?rev=` 增量轮询永远命中不了空载荷、每次传满 2.19MB。要修得**先验证** opencode 追加消息时 `session.time_updated` 一定更新（本仓库尚未验证），再做按 session 增量。
-- `src/sources/opencode.ts` 里「opencode.db 只有 3MB 级别」的注释已过时：实际 **6.5GB**（`part` 表 119722 行）。改该源前先 `du -h ~/.local/share/opencode/opencode.db`。
-- 真实规模（复核基线，2026-09-27）：pi 1381 个 jsonl / 2.19GB / 最大单文件 65MB；store.db 里 pi 2315 行（其中 934 行是源文件已删的归档，属设计承诺，不是 bug）；全量重扫 ≈11s，warm scan ≈100ms（pi）+ 800ms（opencode）。
+- 验证扫描口径有没有改坏，**用 A/B 而不是自我检查**：建临时 store 跑一次冷启动全量重建，和线上增量库逐会话逐字段对比（记得传同一份 `modelAliases`，否则 modelUsage 键天然不同；opencode/pi 在跑时要排除近期仍在活动的会话）。冷启动全量 vs 增量库出现总量差，通常是「归档行」而不是 bug——新库没有源文件已删的归档。
+- opencode 增量已改成**按会话水位**（2026-10-05）。两层：① db 签名（mtime:size + wal）没变 → 一个字节不碰源库；② 签名变了（opencode 在跑，每轮都变）→ 先走覆盖索引 `select distinct session_id from session_message where time_created > 水位` 找出动过的会话，只重建这些会话，其余复用库里已存的 agg。
+  - 水位存 `units.ctx` 的 `{m: 该会话最后一条消息 time_created, f: session 元信息指纹}`；**db 签名存整库级 meta（`store.getSourceSig`/`setSourceSig`）**，不存 ctx——存 ctx 会让被删会话的归档行每轮都被 upsert，`data_revision` 永远停不下来。
+  - **「跳过落库」判定（mtc 相等 + 指纹相等 → 不 upsert）是这套东西成立的关键**。安全窗口（水位回退 5 分钟，容忍时钟漂移）会让旧消息每轮被重扫一遍，全量重建下它们就是「每轮都写」；靠这个判定才能让 revision 在 opencode 运行时保持稳定。⚠️ 这个判定和「用全量查询还是逐会话查询」是两件独立的事，别再像 2026-10-05 那样用同一个标志位把两件事绑在一起。
+  - 归档判据是「`session_v2` 里没有了」，**不是**「这轮没重建它」——增量的 built 只含动过的会话，拿 built 当判据会把所有没变化的会话误标成归档（真实库上中招过 1072/1079）。源里还在但库标了归档的会话必须重新落库把标记清回去。
+  - 实测：26GB 库上 warm scan **2400ms → 160~210ms**，前端 `?rev=` 轮询**3.5MB → 100 字节 `{unchanged:true}`**。冷启动全量重建仍 ~11s。
+  - 「按 `session.time_updated` 做增量」这条路**已证伪，别再走**：`time_updated` 不随消息追加可靠更新，实测 291/1079 个会话的 `time_updated` 比它最后一条消息还早。用 `time_created` 水位才安全。
+  - 要改 opencode 源，先跑 `test/opencode.test.ts`（现在有 11 个用例，含「不空转」「不误标归档」「compaction 计入」几条回归）。
+- ⚠️ **opencode 2.0.22（2026-09-29）把会话/消息迁到了 v2 表，老表当天就停止写入**。只读 `session` / `message` 的表现是「一切正常、实际漏掉迁移之后全部会话」——2026-10-05 就是这么发现的（看板显示 opencode 调用量 0，实际当天有 27 个会话）。现读 `session_v2` / `session_message`：
+  - 判别：`sqlite_master` 里有没有 `session_v2`。有就读 v2，没有（老库）才回退老表——`hasV2Schema()`。
+  - 字段差异：`role`（JSON 内）→ 独立 `type` 列；`$.modelID` / `$.providerID` → `$.model.id` / `$.model.providerID`。**variant 是 `$.model.variant` 的独立字段、不拼进 id**，所以 modelUsage 的键跨迁移期不变。
+  - ⚠️ **v2 的过滤条件必须带 `'compaction'`**：压缩摘要本身是一次真实计费的 LLM 调用（实测 8 条 compaction 消息带 tokens：4896 input / 18787 output / 3.07M cacheRead）。只认 `'assistant'` 会把这块从总量里整块漏掉（老表里只有 assistant 带 token，所以这是迁移新引入的坑）。其余 type（user/system/synthetic/idle/agent-switched/model-switched）实测一律无 token。
+  - `session_v2` 有冗余 `tokens_*` / `cost` 汇总列，但和 `session_message` 逐条求和对不上（250.1M vs 243.4M input），且拿不到按天/按模型拆分 → 一律以 `session_message` 为准。
+  - v2 是老表的**严格超集**（老表 787 个 id 全部存在于 session_v2），所以不必合并两套。
+  - 已知上游瑕疵：迁移给 20 个老会话各丢 1 条 assistant 消息（`session_v2` 自己的汇总列仍算着它），合计 -6.4M token；换来的是 191 个新会话 +3.07B token 和 2 个会话的尾部补全 +139M。别为了「对齐老汇总列」去补——v2 才是活表。
+  - `OPENCODE_PARSER_VERSION` = 6。
+- pi 的会话时间边界必须取 min/max，**不能「首个 timestamp 当 start、末个当 end」**：jsonl 事件时间戳不保证单调递增（实测有会话倒挂 9.5 秒），按首末赋值会产出 `startTs > endTs`。`PARSER_VERSION` = 5。
+- pi 的 `totalTokens` 用源自报值（`addUsage` 里 `tt` 优先），所以它等于 `input+output+cacheRead+cacheWrite`（reasoning ⊆ output），不是五项和——这跟 opencode 相反，别拿一个口径去校验两个源。
+- `opencode.db` 实际 **26GB**（2026-10-05 实测，`part` 表 250300 行）。改该源前先 `du -h ~/.local/share/opencode/opencode.db`；别再信文件里「3MB 级别」的旧注释（已改成 26GB）。
+- 真实规模（复核基线，2026-10-05）：pi 1745 个 jsonl 会话（另有 935 个源文件已删的归档行，属设计承诺，不是 bug）；opencode 1079 个会话；合计 2824 个会话 / 载荷 3.5MB。全量重扫 ≈11s，warm scan ≈160~210ms。稳态 RSS **330~410MB 锯齿波动**（会话量比 2026-09-27 基线翻倍所致；实测 60 次连续请求后不单调增长，是 GC 锯齿不是泄漏）。
