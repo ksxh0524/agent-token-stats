@@ -213,6 +213,23 @@ export class ScanStore {
     return Number(this.getMeta('data_revision') ?? 0);
   }
 
+  /**
+   * 数据源级别的游标（当前只用于 opencode 的 db 签名）。
+   *
+   * 为什么不放 units.ctx：签名是【整库级】的。塞进 per-unit 会导致源侧删掉会话后，
+   * 那条归档行每轮扫描都要被重新 upsert（只为了刷新签名）→ 每轮都 bump
+   * data_revision → 前端 ?rev= 增量轮询永远命中不了空载荷。
+   * 放整库级 meta 且【不】参与 data_revision，签名变了但数据没变时前端能拿到 unchanged。
+   */
+  getSourceSig(source: SourceKind): string | null {
+    return this.getMeta(`sig:${source}`);
+  }
+
+  /** 写数据源级游标；不 bump data_revision（它本身不改变 /api/data 的输出内容） */
+  setSourceSig(source: SourceKind, sig: string): void {
+    this.setMeta(`sig:${source}`, sig);
+  }
+
   /** 批量翻转归档状态；有实际翻转才 +1 版本。供适配器在输出阶段同步归档态用 */
   setArchived(source: SourceKind, changes: Iterable<{ unit: string; archived: boolean }>): void {
     const list = [...changes];
