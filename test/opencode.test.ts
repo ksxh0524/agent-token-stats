@@ -473,3 +473,61 @@ test('opencode v2：源里还在的会话会被解除归档（自愈）', async 
     rmSync(d, { recursive: true, force: true });
   }
 });
+
+test('opencode v2：老表里 v2 丢掉的迁移消息要按 id 去重补回来', async () => {
+  // opencode 迁移到 v2 时给部分老会话各丢了 1 条 assistant 消息，但那些消息还在老表里，
+  // 且两套表共用同一套 message id。补齐必须按 id 去重（不能把 5 万条重复计一遍），
+  // 也必须在增量路径上补（否则会话拿到新消息后总量反而变小）。
+  const d = mkdtempSync(join(tmpdir(), 'oc-recon-'));
+  const fp = join(d, 'opencode.db');
+  const T0 = Date.UTC(2026, 7, 20, 2, 0, 0);
+  const db = new DatabaseSync(fp);
+  db.exec(`
+    CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, title TEXT, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
+    CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, time_created INTEGER, data TEXT);
+    CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+    CREATE INDEX session_message_time_created_idx ON session_message (time_created);
+    CREATE INDEX message_session_time_created_id_idx ON message (session_id, time_created, id);
+  `);
+  db.prepare(`INSERT INTO session_v2 VALUES (?,?,?,?,?)`).run('ses_r1', '/tmp/r', 'r', T0, T0);
+  // 老表靠 data 里的 role 字段识别 assistant（v2 靠独立的 type 列）
+  const asst = (model: string) => ({
+    role: 'assistant',
+    modelID: model,
+    providerID: 'prov',
+    cost: 0,
+    tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } },
+  });
+  // 同一条消息同时存在于两套表 → 只能算一次
+  db.prepare(`INSERT INTO session_message VALUES (?,?,?,?,?)`).run('msg_dup', 'ses_r1', 'assistant', T0, JSON.stringify(asst('m-a')));
+  db.prepare(`INSERT INTO message VALUES (?,?,?,?)`).run('msg_dup', 'ses_r1', T0, JSON.stringify(asst('m-a')));
+  // 只在老表里（模拟迁移丢失的那条）→ 必须补进来
+  db.prepare(`INSERT INTO message VALUES (?,?,?,?)`).run(
+    'msg_only_legacy',
+    'ses_r1',
+    T0 + 1000,
+    JSON.stringify({ role: 'assistant', modelID: 'm-a', providerID: 'prov', cost: 0, tokens: { input: 777, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }),
+  );
+  db.close();
+  process.env.OPENCODE_DB = fp;
+  const st = new ScanStore(join(d, 'store.db'));
+
+  try {
+    const r = await opencodeAdapter.scan(st, {});
+    const a = r.sessions.find((s) => s.id === 'ses_r1')!;
+    assert.equal(a.input, 787, '10（去重后）+ 777（老表补齐）');
+    assert.equal(a.messages, 2, '重复的那条不能算两次');
+    assert.equal(a.totalTokens, 787 + 5);
+
+    // 增量路径：会话拿到新消息后，老表补齐的那部分不能丢
+    addMsg(fp, 'ses_r1', T0 + 10 * 60 * 1000, 100);
+    utimesSync(fp, new Date(), new Date());
+    const r2 = await opencodeAdapter.scan(st, {});
+    const b = r2.sessions.find((s) => s.id === 'ses_r1')!;
+    assert.equal(b.input, 887, '增量重建也必须含老表补齐的 777');
+    assert.ok(!b.archived);
+  } finally {
+    st.close();
+    rmSync(d, { recursive: true, force: true });
+  }
+});

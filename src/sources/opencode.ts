@@ -33,7 +33,7 @@ export function resolveOpencodeDb(): string {
 }
 
 // 解析口径版本：SQL / 字段解释逻辑变更时 +1
-const OPENCODE_PARSER_VERSION = 6;
+const OPENCODE_PARSER_VERSION = 7;
 
 // 老库（v2 迁移前）：role 在 JSON 里，模型路径是 $.modelID / $.providerID
 const LEGACY_MSG_SQL = `
@@ -87,6 +87,40 @@ const V2_TOUCHED_SQL = `SELECT DISTINCT session_id FROM session_message WHERE ti
 // 安全窗口里被重读的行是幂等的 —— 我们按会话整体重建聚合，不会重复计数；
 // 再用 per-session mtc 相等判定跳过落库，所以回退量不会造成 revision 空转。
 const WM_BACKFILL_MS = 5 * 60 * 1000;
+
+/**
+ * 老表补齐：opencode 迁移到 v2 时给一小部分老会话各丢了 1 条 assistant 消息
+ * （实测 33 条 / 6,775,483 token）。这些消息**并没有消失**——它们还在老表里，而且
+ * 两套表的 message id 是同一套（`msg_<hex><hex>`），所以能按 id 精确去重补回来。
+ * opencode 自己的 session_v2 冗余汇总列也仍然算着它们（实测 denorm == 老表口径），
+ * 也就是说补回来才是与 opencode 自身记账一致的那个数。
+ *
+ * 老表已冻结（最后一条消息 2026-09-29 16:38:36），所以这里是一次性历史对账，
+ * 不会随时间变化。不带 session 过滤时 ~1.8s（只在冷启动全量重建那条路上）；
+ * 带上 session 过滤走 message_session_time_created_id_idx，实测 ~0.19s。
+ *
+ * 仅在 v2 库上跑（老库没有 session_message 这张表）。
+ */
+function legacyReconcileSql(scopedSids?: string[]): string {
+  const scope = scopedSids?.length ? `\n  AND m.session_id IN (${scopedSids.map(() => '?').join(',')})` : '';
+  return `
+SELECT m.session_id            AS sid,
+       m.time_created          AS ts,
+       json_extract(m.data,'$.cost')                    AS cost,
+       json_extract(m.data,'$.modelID')                 AS model,
+       json_extract(m.data,'$.providerID')              AS provider,
+       json_extract(m.data,'$.tokens.input')            AS input,
+       json_extract(m.data,'$.tokens.output')           AS output,
+       json_extract(m.data,'$.tokens.reasoning')        AS reasoning,
+       json_extract(m.data,'$.tokens.cache.read')       AS cacheRead,
+       json_extract(m.data,'$.tokens.cache.write')      AS cacheWrite,
+       json_extract(m.data,'$.tokens.total')            AS totalTokens
+FROM message m
+WHERE json_extract(m.data,'$.role') = 'assistant'
+  AND json_extract(m.data,'$.tokens') IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM session_message v WHERE v.id = m.id)${scope}
+ORDER BY m.session_id, m.time_created`;
+}
 
 // 时间边界以 session 表为准：time_created / time_updated 是 opencode 自己维护的
 // 会话首末时刻，覆盖所有消息（含无 token 的 user / tool 消息）。只用带 token 的
@@ -152,15 +186,19 @@ function openDb(fp: string): DatabaseSync {
 
 // v2 迁移后 session_v2 / session_message 才是活表，老表冻结在迁移当天。
 // 探一次 sqlite_master 决定读哪套（老库没有这两张表）。
-function hasV2Schema(db: DatabaseSync): boolean {
+function hasTable(db: DatabaseSync, name: string): boolean {
   try {
-    const r = db.prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'session_v2'`).get() as
+    const r = db.prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name) as
       | Record<string, unknown>
       | undefined;
     return !!r;
   } catch {
     return false;
   }
+}
+
+function hasV2Schema(db: DatabaseSync): boolean {
+  return hasTable(db, 'session_v2');
 }
 
 type SessionMeta = { directory: string; title: string; tc: number; tu: number };
@@ -271,9 +309,12 @@ function buildAll(
   meta: Map<string, SessionMeta>,
   msgSql: string,
   aliases: Record<string, string>,
+  reconcile: boolean,
 ): Map<string, Built> {
   const acc = new Map<string, Acc>();
   accumulate(db.prepare(msgSql).all() as unknown[], aliases, acc);
+  // 老表对账：把迁移时丢进老表的那批消息补回来（只在 v2 库 + 老表还在时才有意义）
+  if (reconcile) accumulate(db.prepare(legacyReconcileSql()).all() as unknown[], aliases, acc);
 
   const out = new Map<string, Built>();
   // 无 token 消息的会话也保留（0 用量，窗口筛选时自然被排除），与 pi 口径一致
@@ -291,11 +332,18 @@ function buildSome(
   msgSql: string,
   aliases: Record<string, string>,
   sids: string[],
+  reconcile: boolean,
 ): Map<string, Built> {
-  const ph = sids.map(() => '?').join(',');
-  const sql = `${msgSql.replace(/ORDER BY[\s\S]*$/, '')} AND m.session_id IN (${ph}) ORDER BY m.session_id, m.time_created`;
   const acc = new Map<string, Acc>();
-  accumulate(db.prepare(sql).all(...sids) as unknown[], aliases, acc);
+  const readScoped = (sql: string, params: string[]) => {
+    const ph = params.map(() => '?').join(',');
+    const full = `${sql.replace(/ORDER BY[\s\S]*$/, '')} AND m.session_id IN (${ph}) ORDER BY m.session_id, m.time_created`;
+    accumulate(db.prepare(full).all(...params) as unknown[], aliases, acc);
+  };
+  readScoped(msgSql, sids);
+  // 老表对账同样要限定在这些会话里：否则重建单个会话时会把它的老表贡献丢掉，
+  // 表现为「会话有新消息后总量反而变小」。
+  if (reconcile) readScoped(legacyReconcileSql(), sids);
 
   const out = new Map<string, Built>();
   for (const id of sids) {
@@ -418,6 +466,8 @@ export const opencodeAdapter: SourceAdapter = {
       const db = openDb(dbPath);
       try {
         const v2 = hasV2Schema(db);
+        // 老表对账的前提：v2 在、且老表 message 还没被删（纯 v2 库没有这张表）
+        const reconcile = v2 && hasTable(db, 'message');
         const sessionSql = v2 ? V2_SESSION_SQL : LEGACY_SESSION_SQL;
         const msgSql = v2 ? V2_MSG_SQL : LEGACY_MSG_SQL;
         const meta = readSessionMeta(db, sessionSql);
@@ -467,8 +517,8 @@ export const opencodeAdapter: SourceAdapter = {
           need.length === 0
             ? new Map()
             : tooMany || !v2 || !ctxShapeOk
-              ? buildAll(db, meta, msgSql, aliases)
-              : buildSome(db, meta, msgSql, aliases, need);
+              ? buildAll(db, meta, msgSql, aliases, reconcile)
+              : buildSome(db, meta, msgSql, aliases, need, reconcile);
 
         const rows: UnitRow[] = [];
         for (const [sid, b] of built) {
